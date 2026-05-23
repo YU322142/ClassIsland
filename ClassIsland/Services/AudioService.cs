@@ -1,7 +1,9 @@
 using System;
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 using ClassIsland.Core;
@@ -19,17 +21,44 @@ namespace ClassIsland.Services;
 
 public class AudioService(ILogger<AudioService> logger) : IAudioService
 {
-    private readonly AudioEngine _audioEngine = Task.Run((() => new MiniAudioEngine())).Result;
+    // 【修改点1】：用 try-catch 包裹 MiniAudioEngine 初始化，允许为 null
+    private readonly AudioEngine? _audioEngine = InitAudioEngine();
     private ILogger<AudioService> Logger { get; } = logger;
 
     private RefCounted<AudioPlaybackDevice>? _sharedAudioPlaybackDevice;
-
     private object _audioPlaybackDeviceInitializeLock = new();
+
+    private static AudioEngine? InitAudioEngine()
+    {
+        try { return Task.Run(() => new MiniAudioEngine()).Result; }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[AudioService] Audio engine init failed (non-fatal): {ex.InnerException?.Message ?? ex.Message}");
+            return null;
+        }
+    }
+
+    // 【修改点2】：寻找 Linux 系统自带的音频播放器
+    private static string? FindSystemPlayer()
+    {
+        foreach (var player in new[] { "ffplay", "paplay", "aplay" })
+        {
+            try
+            {
+                var p = Process.Start(new ProcessStartInfo { FileName = "which", Arguments = player, RedirectStandardOutput = true, UseShellExecute = false, CreateNoWindow = true });
+                p?.WaitForExit(1000);
+                if (p?.ExitCode == 0) return player;
+            }
+            catch { }
+        }
+        return null;
+    }
 
     public AudioEngine AudioEngine
     {
         get
         {
+            if (_audioEngine == null) throw new PlatformNotSupportedException("当前平台不支持 SoundFlow 原生音频引擎。");
             if (OperatingSystem.IsWindows() && Thread.CurrentThread.GetApartmentState() != ApartmentState.MTA)
             {
                 throw new InvalidOperationException(
@@ -71,7 +100,9 @@ public class AudioService(ILogger<AudioService> logger) : IAudioService
     {
         try
         {
-            var deviceInfo = AudioEngine.PlaybackDevices.FirstOrDefault(x => x.IsDefault);
+            if (_audioEngine == null) return null; // 【修改点3】：拦截空引擎
+
+            var deviceInfo = _audioEngine.PlaybackDevices.FirstOrDefault(x => x.IsDefault);
             if (deviceInfo == default)
             {
                 Logger.LogDebug("找不到可用的音频设备");
@@ -79,7 +110,7 @@ public class AudioService(ILogger<AudioService> logger) : IAudioService
             }
 
             Logger.LogDebug("初始化音频设备 {} (Id={})", deviceInfo.Name, deviceInfo.Id);
-            var device = AudioEngine.InitializePlaybackDevice(deviceInfo, IAudioService.DefaultAudioFormat);
+            var device = _audioEngine.InitializePlaybackDevice(deviceInfo, IAudioService.DefaultAudioFormat);
             device.MasterMixer.Volume = 1.0f;
             device.Start();
             return device;
@@ -94,8 +125,16 @@ public class AudioService(ILogger<AudioService> logger) : IAudioService
 
     public Task PlayAudioAsync(Stream audio, float volume, CancellationToken? cancellationToken = null) => Task.Run(async () =>
     {
-        using var audioStream = audio;
         cancellationToken ??= CancellationToken.None;
+
+        // 【修改点4】：Linux 后备系统播放逻辑
+        if (_audioEngine == null)
+        {
+            await PlayStreamViaSystemAsync(audio, volume);
+            return;
+        }
+
+        using var audioStream = audio;
         using var lease = await TryInitializeDefaultPlaybackDeviceSafeAsync();
         if (lease == null)
         {
@@ -129,15 +168,69 @@ public class AudioService(ILogger<AudioService> logger) : IAudioService
         }
     });
 
+    // 【修改点5】：新增的 Stream 后备播放方法
+    private async Task PlayStreamViaSystemAsync(Stream audio, float volume)
+    {
+        var playerName = FindSystemPlayer();
+        if (playerName == null) { Logger.LogWarning("找不到系统音频播放器，无法播放声音。"); return; }
+        
+        var tempFile = Path.Combine(Path.GetTempPath(), $"ci_audio_{Guid.NewGuid():N}.wav");
+        try
+        {
+            using (var fs = File.Create(tempFile)) { await audio.CopyToAsync(fs); }
+            await RunPlayerAsync(playerName, tempFile, volume);
+        }
+        catch (Exception ex) { Logger.LogWarning("系统音频播放失败: {Msg}", ex.Message); }
+        finally { try { File.Delete(tempFile); } catch { } }
+    }
+
     public async Task PlayAudioAsync(string filePath, float volume, CancellationToken? cancellationToken = null)
     {
+        // 【修改点6】：新增的本地文件后备播放逻辑
+        if (_audioEngine == null && !RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
+            var playerName = FindSystemPlayer();
+            if (playerName == null) { Logger.LogWarning("找不到系统音频播放器，无法播放声音。"); return; }
+            await RunPlayerAsync(playerName, filePath, volume);
+            return;
+        }
+
         using var audio = File.OpenRead(filePath);
         await PlayAudioAsync(audio, volume, cancellationToken);
     }
 
+    // 【修改点7】：执行系统播放器（完全忽略 CancellationToken 以防被 TTS 模块错误掐断）
+    private async Task RunPlayerAsync(string playerName, string filePath, float volume)
+    {
+        var args = playerName switch
+        {
+            "ffplay" => $"-nodisp -autoexit -volume {(int)(volume * 100)} \"{filePath}\"",
+            "paplay" => $"--volume {(int)(volume * 65536)} \"{filePath}\"",
+            _ => $"\"{filePath}\""
+        };
+        
+        Logger.LogDebug("使用 {Player} 播放音频: {File}", playerName, filePath);
+        
+        var psi = new ProcessStartInfo
+        {
+            FileName = playerName, 
+            Arguments = args,
+            UseShellExecute = false, 
+            CreateNoWindow = true,
+            RedirectStandardOutput = true, 
+            RedirectStandardError = true
+        };
+        
+        using var process = Process.Start(psi);
+        if (process != null) 
+        {
+            await process.WaitForExitAsync(); // 不传入 cancellationToken，强制等它播完
+        }
+    }
+
     public void Dispose()
     {
-        AudioEngine.Dispose();
+        _audioEngine?.Dispose();
         GC.SuppressFinalize(this);
     }
 }
