@@ -1,0 +1,116 @@
+name: Build ClassIsland for LoongArch
+
+on:
+  push:
+    branches: [ "master", "main", "dev" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Setup .NET 8
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '8.0.x'
+
+    - name: 补丁 1 - 降级 SDK 到 .NET 8
+      run: |
+        cat > global.json << 'EOF'
+        {
+          "sdk": {
+            "version": "8.0.0",
+            "rollForward": "latestFeature",
+            "allowPrerelease": true
+          }
+        }
+        EOF
+
+    - name: 补丁 2 - 修复子模块 EdgeTtsSharp
+      run: |
+        sed -i 's/<LangVersion>13<\/LangVersion>/<LangVersion>preview<\/LangVersion>/g' vendors/EdgeTtsSharp/Edge_tts_sharp/Edge_tts_sharp.csproj
+        sed -i 's/<LangVersion>latest<\/LangVersion>/<LangVersion>preview<\/LangVersion>/g' vendors/EdgeTtsSharp/Edge_tts_sharp/Edge_tts_sharp.csproj
+
+    - name: 补丁 3 - 生成占位 Secrets
+      run: |
+        cat > ClassIsland/secrets.g.cs << 'EOF'
+        namespace ClassIsland.Services.SpeechService { 
+            public static partial class GptSovitsSecrets {
+                public const string PrivateKey = "";
+                public const string PrivateKeyPassPhrase = "";
+                public const bool IsSecretsFilled = false;
+            }
+        }
+        EOF
+
+    - name: 编译 ClassIsland
+      run: |
+        dotnet publish ClassIsland.Desktop/ClassIsland.Desktop.csproj \
+          -c Release \
+          --no-self-contained \
+          -p:PublishDir=../output/ClassIsland \
+          -p:PublishBuilding=true \
+          -p:PublishPlatform=linux \
+          -p:Platforms_Linux=true \
+          -p:TrimAssets=false \
+          "-p:ClassIsland_PlatformTarget=Any CPU"
+
+    - name: 注入原生库和 .NET 运行时
+      run: |
+        # 1. 注入原生库
+        mkdir -p output/ClassIsland/runtimes/linux-loongarch64/native/
+        cp LoongArch-NativeLibs/libSkiaSharp.so output/ClassIsland/runtimes/linux-loongarch64/native/
+        cp LoongArch-NativeLibs/libHarfBuzzSharp.so output/ClassIsland/runtimes/linux-loongarch64/native/
+        chmod +rx output/ClassIsland/runtimes/linux-loongarch64/native/*.so
+
+        # 2. 解压 .NET 运行时到打包目录
+        mkdir -p output/dotnet-runtime
+        # 解压你传到仓库里的压缩包
+        tar -xzf LoongArch-Runtime/dotnet-runtime-*.tar* -C output/dotnet-runtime/
+        chmod +x output/dotnet-runtime/dotnet
+
+    - name: 创建一键启动脚本
+      run: |
+        cat > output/run.sh << 'SCRIPT'
+        #!/bin/bash
+        SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+        APP_DIR="$SCRIPT_DIR/ClassIsland"
+        
+        export DOTNET_ROOT="$SCRIPT_DIR/dotnet-runtime"
+        DOTNET="$DOTNET_ROOT/dotnet"
+        
+        export PATH="$DOTNET_ROOT:$PATH:/usr/bin:/usr/local/bin"
+        export DOTNET_CLI_TELEMETRY_OPTOUT=1
+        
+        export DISPLAY=${DISPLAY:-:0}
+        export XAUTHORITY=${XAUTHORITY:-$HOME/.Xauthority}
+        export DBUS_SESSION_BUS_ADDRESS=${DBUS_SESSION_BUS_ADDRESS:-unix:path=/run/user/$(id -u)/bus}
+        export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
+        export XDG_DATA_DIRS=${XDG_DATA_DIRS:-/usr/share:/usr/local/share}
+        
+        # 修复资源相对路径问题
+        [ ! -e "$SCRIPT_DIR/dotnet-runtime/Assets" ] && ln -sf "$APP_DIR/Assets" "$SCRIPT_DIR/dotnet-runtime/Assets"
+        [ ! -e "$SCRIPT_DIR/dotnet-runtime/Config" ] && ln -sf "$APP_DIR/Config" "$SCRIPT_DIR/dotnet-runtime/Config"
+        
+        cd "$APP_DIR"
+        mkdir -p "$SCRIPT_DIR/logs"
+        nohup "$DOTNET" "$APP_DIR/ClassIsland.Desktop.dll" "$@" > "$SCRIPT_DIR/logs/classisland.log" 2>&1 & disown
+        echo "✅ ClassIsland 启动成功！"
+        SCRIPT
+        chmod +x output/run.sh
+
+    - name: 打包成 tar.gz
+      run: |
+        cd output
+        tar -czvf ../ClassIsland-LoongArch.tar.gz .
+
+    - name: 上传 Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: ClassIsland-LoongArch-OldWorld
+        path: ClassIsland-LoongArch.tar.gz
