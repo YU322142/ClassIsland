@@ -1,10 +1,8 @@
 name: Build ClassIsland for LoongArch
-
 on:
   push:
     branches: [ "master", "main", "dev" ]
   workflow_dispatch:
-
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -13,12 +11,10 @@ jobs:
       uses: actions/checkout@v4
       with:
         submodules: recursive
-
     - name: Setup .NET 8
       uses: actions/setup-dotnet@v4
       with:
         dotnet-version: '8.0.x'
-
     - name: 补丁 1 - 降级 SDK 到 .NET 8
       run: |
         cat > global.json << 'EOF'
@@ -30,12 +26,10 @@ jobs:
           }
         }
         EOF
-
     - name: 补丁 2 - 修复子模块 EdgeTtsSharp
       run: |
         sed -i 's/<LangVersion>13<\/LangVersion>/<LangVersion>preview<\/LangVersion>/g' vendors/EdgeTtsSharp/Edge_tts_sharp/Edge_tts_sharp.csproj
         sed -i 's/<LangVersion>latest<\/LangVersion>/<LangVersion>preview<\/LangVersion>/g' vendors/EdgeTtsSharp/Edge_tts_sharp/Edge_tts_sharp.csproj
-
     - name: 补丁 3 - 生成占位 Secrets
       run: |
         cat > ClassIsland/secrets.g.cs << 'EOF'
@@ -47,7 +41,6 @@ jobs:
             }
         }
         EOF
-
     - name: 编译 ClassIsland
       run: |
         dotnet publish ClassIsland.Desktop/ClassIsland.Desktop.csproj \
@@ -59,7 +52,6 @@ jobs:
           -p:Platforms_Linux=true \
           -p:TrimAssets=false \
           "-p:ClassIsland_PlatformTarget=Any CPU"
-
     - name: 注入原生库和 .NET 运行时
       run: |
         # 1. 注入原生库
@@ -67,13 +59,11 @@ jobs:
         cp LoongArch-NativeLibs/libSkiaSharp.so output/ClassIsland/runtimes/linux-loongarch64/native/
         cp LoongArch-NativeLibs/libHarfBuzzSharp.so output/ClassIsland/runtimes/linux-loongarch64/native/
         chmod +rx output/ClassIsland/runtimes/linux-loongarch64/native/*.so
-
-        # 2. 解压 .NET 运行时到打包目录
+        # 2. 解压 .tar 格式的 .NET 运行时到打包目录
         mkdir -p output/dotnet-runtime
-        # 解压你传到仓库里的压缩包
-        tar -xzf LoongArch-Runtime/dotnet-runtime-*.tar* -C output/dotnet-runtime/
+        # xf 可以解压普通的 .tar 包
+        tar -xf LoongArch-Runtime/dotnet-runtime-*.tar* -C output/dotnet-runtime/
         chmod +x output/dotnet-runtime/dotnet
-
     - name: 创建一键启动脚本
       run: |
         cat > output/run.sh << 'SCRIPT'
@@ -100,15 +90,13 @@ jobs:
         cd "$APP_DIR"
         mkdir -p "$SCRIPT_DIR/logs"
         nohup "$DOTNET" "$APP_DIR/ClassIsland.Desktop.dll" "$@" > "$SCRIPT_DIR/logs/classisland.log" 2>&1 & disown
-        echo "✅ ClassIsland 启动成功！"
+        echo "✅ ClassIsland 已在后台启动，日志位于 logs/classisland.log"
         SCRIPT
         chmod +x output/run.sh
-
     - name: 打包成 tar.gz
       run: |
         cd output
         tar -czvf ../ClassIsland-LoongArch.tar.gz .
-
     - name: 上传 Artifact
       uses: actions/upload-artifact@v4
       with:
