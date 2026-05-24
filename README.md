@@ -13,7 +13,7 @@
 1. **底层崩溃修复**：彻底放弃 x86 转译，采用原生编译。避开了旧世界 Linux 16KB 内存页导致的 .NET JIT `mprotect` 权限分配崩溃问题。
 2. **图形渲染修复**：官方 NuGet 源缺失 LoongArch 的原生 UI 依赖。本分支内建了提取自原生系统的 `libSkiaSharp.so` 和 `libHarfBuzzSharp.so`，彻底解决黑屏/闪退问题。
 3. **音频引擎重构**：原版使用的 `MiniAudio` 缺少龙芯原生实现会导致启动崩溃。本分支重写了 `AudioService`，智能调用系统底层的 `ffplay`，完美恢复了 EdgeTTS 语音播报及上下课铃声。
-4. **插件完美兼容**：同步深度修改了 [IslandCaller 随机点名插件](https://github.com/YU322142/IslandCaller-linux/tree/loongarch-support)，去除了对 Windows 注册表的依赖（改为 JSON 存储），重写了 Linux X11 协议的悬浮窗置顶逻辑（`_NET_WM_STATE_ABOVE`）及手动拖拽映射，使插件在 Linux 下体验与 Windows 完全一致。
+4. **修改部分插件**：同步深度修改了 [IslandCaller 随机点名插件](https://github.com/YU322142/IslandCaller-linux/tree/loongarch-support)，去除了对 Windows 注册表的依赖（改为 JSON 存储），重写了 Linux X11 协议的悬浮窗置顶逻辑（`_NET_WM_STATE_ABOVE`）及手动拖拽映射，使插件在 Linux 下体验与 Windows 完全一致。
 
 ## 📥 安装与运行
 
