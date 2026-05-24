@@ -13,7 +13,14 @@ jobs:
       uses: actions/checkout@v4
       with:
         submodules: recursive
-        fetch-depth: 0     # 必须为0，获取完整历史和 Tags 供版本号生成
+        fetch-depth: 0
+
+    - name: 补丁 0 - 动态设置自定义版本号
+      run: |
+        git config user.email "actions@github.com"
+        git config user.name "GitHub Actions"
+        # 你可以在这里随便改你想要的版本号，编译出来就会显示这个版本
+        git tag 2.0.3.2
 
     - name: Setup .NET 8
       uses: actions/setup-dotnet@v4
@@ -32,12 +39,12 @@ jobs:
         }
         EOF
 
-    - name: 补丁 2 - 修复子模块 EdgeTtsSharp
+    - name: 补丁 2 - 修复子模块 EdgeTtsSharp (兼容新版编译器)
       run: |
         sed -i 's/<LangVersion>13<\/LangVersion>/<LangVersion>preview<\/LangVersion>/g' vendors/EdgeTtsSharp/Edge_tts_sharp/Edge_tts_sharp.csproj
         sed -i 's/<LangVersion>latest<\/LangVersion>/<LangVersion>preview<\/LangVersion>/g' vendors/EdgeTtsSharp/Edge_tts_sharp/Edge_tts_sharp.csproj
 
-    - name: 补丁 3 - 生成占位 Secrets
+    - name: 补丁 3 - 动态生成 Secrets 占位文件
       run: |
         cat > ClassIsland/secrets.g.cs << 'EOF'
         namespace ClassIsland.Services.SpeechService { 
@@ -48,6 +55,89 @@ jobs:
             }
         }
         EOF
+
+    - name: 补丁 4 - 动态重写 AudioService 支持龙芯 Linux 播放器
+      run: |
+        cat > ClassIsland/Services/AudioService.cs << 'EOF'
+        using System; using System.Diagnostics; using System.IO; using System.Linq; using System.Threading; using System.Threading.Tasks;
+        using ClassIsland.Core.Abstractions.Services; using Microsoft.Extensions.Logging; using SoundFlow.Abstracts; using SoundFlow.Abstracts.Devices;
+        using SoundFlow.Backends.MiniAudio; using SoundFlow.Components; using SoundFlow.Providers; using System.Runtime.InteropServices;
+        namespace ClassIsland.Services;
+        public class AudioService(ILogger<AudioService> logger) : IAudioService {
+            private readonly AudioEngine? _audioEngine = InitAudioEngine();
+            private ILogger<AudioService> Logger { get; } = logger;
+            private SoundFlow.Structs.RefCounted<AudioPlaybackDevice>? _sharedAudioPlaybackDevice;
+            private object _audioPlaybackDeviceInitializeLock = new();
+            private static AudioEngine? InitAudioEngine() {
+                try { return Task.Run(() => new MiniAudioEngine()).Result; } catch { return null; }
+            }
+            private static string? FindSystemPlayer() {
+                foreach (var name in new[] { "ffplay", "paplay", "aplay" }) {
+                    try {
+                        var p = Process.Start(new ProcessStartInfo { FileName = "which", Arguments = name, RedirectStandardOutput = true, UseShellExecute = false, CreateNoWindow = true });
+                        p?.WaitForExit(1000); if (p?.ExitCode == 0) return name;
+                    } catch { }
+                } return null;
+            }
+            public AudioEngine AudioEngine => _audioEngine ?? throw new PlatformNotSupportedException("Audio engine not available.");
+            public AudioPlaybackDevice? TryInitializeDefaultPlaybackDevice() => TryInitializeDefaultPlaybackDeviceAsync().Result;
+            public Task<AudioPlaybackDevice?> TryInitializeDefaultPlaybackDeviceAsync() => Task.Run(TryInitializeDefaultPlaybackDeviceInternal);
+            public Task<SoundFlow.Structs.RefCounted<AudioPlaybackDevice>.Lease?> TryInitializeDefaultPlaybackDeviceSafeAsync() => Task.Run(() => {
+                lock (_audioPlaybackDeviceInitializeLock) {
+                    if (_sharedAudioPlaybackDevice?.IsValueDisposed == false) return _sharedAudioPlaybackDevice.Rent();
+                    if (TryInitializeDefaultPlaybackDeviceInternal() is not { } device) return null;
+                    _sharedAudioPlaybackDevice = new SoundFlow.Structs.RefCounted<AudioPlaybackDevice>(device);
+                    var lease = _sharedAudioPlaybackDevice.Rent(); _sharedAudioPlaybackDevice.Dispose(); return lease;
+                }
+            });
+            private AudioPlaybackDevice? TryInitializeDefaultPlaybackDeviceInternal() {
+                try {
+                    if (_audioEngine == null) return null;
+                    var deviceInfo = AudioEngine.PlaybackDevices.FirstOrDefault(x => x.IsDefault);
+                    if (deviceInfo == default) return null;
+                    var device = AudioEngine.InitializePlaybackDevice(deviceInfo, IAudioService.DefaultAudioFormat);
+                    device.MasterMixer.Volume = 1.0f; device.Start(); return device;
+                } catch { return null; }
+            }
+            public Task PlayAudioAsync(Stream audio, float volume, CancellationToken? cancellationToken = null) => Task.Run(async () => {
+                cancellationToken ??= CancellationToken.None;
+                if (_audioEngine == null) { await PlayStreamViaSystemAsync(audio, volume); return; }
+                using var audioStream = audio; using var lease = await TryInitializeDefaultPlaybackDeviceSafeAsync();
+                if (lease == null) return; var device = lease.Value;
+                using var player = new SoundPlayer(AudioEngine, IAudioService.DefaultAudioFormat, new StreamDataProvider(AudioEngine, IAudioService.DefaultAudioFormat, audio));
+                player.Volume = volume; device.MasterMixer.AddComponent(player);
+                var tcs = new TaskCompletionSource<bool>();
+                player.PlaybackEnded += (_, _) => tcs.TrySetResult(true);
+                cancellationToken.Value.Register(() => tcs.TrySetResult(false));
+                player.Play(); tcs.Task.Wait();
+            });
+            private async Task PlayStreamViaSystemAsync(Stream audio, float volume) {
+                var playerName = FindSystemPlayer(); if (playerName == null) return;
+                var tempFile = Path.Combine(Path.GetTempPath(), $"ci_audio_{Guid.NewGuid():N}.wav");
+                try { using (var fs = File.Create(tempFile)) { await audio.CopyToAsync(fs); } await RunPlayerAsync(playerName, tempFile, volume); }
+                finally { try { File.Delete(tempFile); } catch { } }
+            }
+            public async Task PlayAudioAsync(string filePath, float volume, CancellationToken? cancellationToken = null) {
+                if (_audioEngine == null) {
+                    var playerName = FindSystemPlayer(); if (playerName == null) return;
+                    await RunPlayerAsync(playerName, filePath, volume); return;
+                }
+                using var audio = File.OpenRead(filePath); await PlayAudioAsync(audio, volume, cancellationToken);
+            }
+            private async Task RunPlayerAsync(string playerName, string filePath, float volume) {
+                var args = playerName switch { "ffplay" => $"-nodisp -autoexit -volume {(int)(volume * 100)} \"{filePath}\"", "paplay" => $"--volume {(int)(volume * 65536)} \"{filePath}\"", _ => $"\"{filePath}\"" };
+                using var process = Process.Start(new ProcessStartInfo { FileName = playerName, Arguments = args, UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true });
+                if (process != null) await process.WaitForExitAsync();
+            }
+            public void Dispose() { _audioEngine?.Dispose(); GC.SuppressFinalize(this); }
+        }
+        EOF
+
+    - name: 补丁 5 - 动态修复 Linux 重启退出的问题
+      run: |
+        # 拦截重启逻辑：将默认执行 dotnet 改为执行上一层目录的 run.sh 脚本
+        sed -i 's/Environment.ProcessPath/"bash"/g' ClassIsland.Core/AppBase.cs
+        sed -i 's/FileName = "bash"/FileName = "bash", Arguments = "..\/run.sh"/g' ClassIsland.Core/AppBase.cs
 
     - name: 编译 ClassIsland
       run: |
@@ -63,15 +153,16 @@ jobs:
 
     - name: 注入原生库和 .NET 运行时
       run: |
-        # 1. 注入原生库
         mkdir -p output/ClassIsland/runtimes/linux-loongarch64/native/
-        cp LoongArch-NativeLibs/libSkiaSharp.so output/ClassIsland/runtimes/linux-loongarch64/native/
-        cp LoongArch-NativeLibs/libHarfBuzzSharp.so output/ClassIsland/runtimes/linux-loongarch64/native/
-        chmod +rx output/ClassIsland/runtimes/linux-loongarch64/native/*.so
-
-        # 2. 直接将运行时解压到 ClassIsland 目录！(完美解决各种路径错误)
-        tar -xf LoongArch-Runtime/dotnet-runtime-*.tar* -C output/ClassIsland/
-        chmod +x output/ClassIsland/dotnet
+        if [ -d "LoongArch-NativeLibs" ]; then
+            cp LoongArch-NativeLibs/*.so output/ClassIsland/runtimes/linux-loongarch64/native/ 2>/dev/null || true
+            chmod +rx output/ClassIsland/runtimes/linux-loongarch64/native/*.so 2>/dev/null || true
+        fi
+        mkdir -p output/dotnet-runtime
+        if [ -d "LoongArch-Runtime" ]; then
+            tar -xf LoongArch-Runtime/dotnet-runtime-*.tar* -C output/dotnet-runtime/ 2>/dev/null || true
+            chmod +x output/dotnet-runtime/dotnet 2>/dev/null || true
+        fi
 
     - name: 创建一键启动脚本
       run: |
@@ -80,7 +171,9 @@ jobs:
         SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
         APP_DIR="$SCRIPT_DIR/ClassIsland"
         
-        export DOTNET_ROOT="$APP_DIR"
+        export DOTNET_ROOT="$SCRIPT_DIR/dotnet-runtime"
+        DOTNET="$DOTNET_ROOT/dotnet"
+        
         export PATH="$DOTNET_ROOT:$PATH:/usr/bin:/usr/local/bin"
         export DOTNET_CLI_TELEMETRY_OPTOUT=1
         
@@ -90,9 +183,12 @@ jobs:
         export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
         export XDG_DATA_DIRS=${XDG_DATA_DIRS:-/usr/share:/usr/local/share}
         
+        [ ! -e "$SCRIPT_DIR/dotnet-runtime/Assets" ] && ln -sf "$APP_DIR/Assets" "$SCRIPT_DIR/dotnet-runtime/Assets"
+        [ ! -e "$SCRIPT_DIR/dotnet-runtime/Config" ] && ln -sf "$APP_DIR/Config" "$SCRIPT_DIR/dotnet-runtime/Config"
+        
         cd "$APP_DIR"
         mkdir -p "$SCRIPT_DIR/logs"
-        nohup ./dotnet ClassIsland.Desktop.dll "$@" > "$SCRIPT_DIR/logs/classisland.log" 2>&1 & disown
+        nohup "$DOTNET" ClassIsland.Desktop.dll "$@" > "$SCRIPT_DIR/logs/classisland.log" 2>&1 & disown
         echo "✅ ClassIsland 已在后台启动，日志位于 logs/classisland.log"
         SCRIPT
         chmod +x output/run.sh
