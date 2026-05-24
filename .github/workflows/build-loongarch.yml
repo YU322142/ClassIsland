@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       version_tag:
-        description: '手动指定版本号 (例如 2.0.4.0000)，留空则基于历史自动+1'
+        description: '手动指定版本号（例如 2.0.4.0000）。留空则基于远端最新 tag 自动计算'
         required: false
         default: ''
 
@@ -15,210 +15,444 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-      with:
-        submodules: recursive
-        fetch-depth: 0
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
 
-    - name: 补丁 0 - 动态计算版本号并自动递增
-      run: |
-        git config user.email "actions@github.com"
-        git config user.name "GitHub Actions"
-        
-        git fetch --tags https://github.com/ClassIsland/ClassIsland.git || true
-        
-        VERSION_TAG="${{ github.event.inputs.version_tag }}"
-        
-        if [ -z "$VERSION_TAG" ]; then
-          # 寻找当前最新的以数字开头的标签
-          LATEST_TAG=$(git tag -l | grep -E '^[0-9]' | sort -V | tail -n 1 || echo "2.0.3.0000")
-          echo "读取到上一次的版本号: $LATEST_TAG"
-          
-          IFS='.' read -r v1 v2 v3 v4 <<< "$LATEST_TAG"
-          v1=${v1:-2}; v2=${v2:-0}; v3=${v3:-3}; v4=${v4:-0}
-          
-          # 清理非数字字符，强制十进制
-          v4=$(echo "$v4" | sed 's/[^0-9]*//g')
-          NEXT_V4=$((10#$v4 + 1))
-          
-          # 强制补足 4 位数字格式
-          NEXT_V4_PADDED=$(printf "%04d" $NEXT_V4)
-          VERSION_TAG="$v1.$v2.$v3.$NEXT_V4_PADDED"
-        fi
-        
-        echo "当前构建版本号被设定为: $VERSION_TAG"
-        git tag -f "$VERSION_TAG"
-        git push origin "$VERSION_TAG" --force
+      - name: Prepare version tag
+        shell: bash
+        run: |
+          set -e
+          git config user.email "actions@github.com"
+          git config user.name "GitHub Actions"
 
-    - name: Setup .NET 8
-      uses: actions/setup-dotnet@v4
-      with:
-        dotnet-version: '8.0.x'
+          # 拉取所有远端 tag
+          git fetch --tags origin || true
 
-    - name: 补丁 1 - 降级 SDK 到 .NET 8
-      run: |
-        cat > global.json << 'EOF'
-        {
-          "sdk": {
-            "version": "8.0.0",
-            "rollForward": "latestFeature",
-            "allowPrerelease": true
-          }
-        }
-        EOF
+          INPUT_TAG="${{ github.event.inputs.version_tag }}"
 
-    - name: 补丁 2 - 修复子模块 EdgeTtsSharp
-      run: |
-        sed -i 's/<LangVersion>13<\/LangVersion>/<LangVersion>preview<\/LangVersion>/g' vendors/EdgeTtsSharp/Edge_tts_sharp/Edge_tts_sharp.csproj
-        sed -i 's/<LangVersion>latest<\/LangVersion>/<LangVersion>preview<\/LangVersion>/g' vendors/EdgeTtsSharp/Edge_tts_sharp/Edge_tts_sharp.csproj
+          if [ -n "$INPUT_TAG" ]; then
+            VERSION_TAG="$INPUT_TAG"
+          else
+            # 只看远端已有的数字 tag
+            LATEST_TAG="$(git tag -l | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1 || true)"
 
-    - name: 补丁 3 - 动态生成 Secrets 占位文件
-      run: |
-        cat > ClassIsland/secrets.g.cs << 'EOF'
-        namespace ClassIsland.Services.SpeechService { 
-            public static partial class GptSovitsSecrets {
-                public const string PrivateKey = "";
-                public const string PrivateKeyPassPhrase = "";
-                public const bool IsSecretsFilled = false;
+            if [ -z "$LATEST_TAG" ]; then
+              # 仓库里没有 tag 时，从 2.0.3.0001 开始
+              VERSION_TAG="2.0.3.0001"
+            else
+              echo "Latest remote tag: $LATEST_TAG"
+              IFS='.' read -r v1 v2 v3 v4 <<< "$LATEST_TAG"
+
+              v1="${v1:-2}"
+              v2="${v2:-0}"
+              v3="${v3:-3}"
+              v4="${v4:-0}"
+
+              # 去掉非数字
+              v4="$(echo "$v4" | sed 's/[^0-9]//g')"
+              [ -z "$v4" ] && v4="0"
+
+              # 迁移逻辑：
+              # 0      -> 0001
+              # 203    -> 2003
+              # 202    -> 2002
+              # 2003   -> 2004
+              if [ "$v4" = "0" ]; then
+                NEXT_V4="0001"
+              elif [ "${#v4}" -lt 4 ]; then
+                # 旧格式迁移到 20xx
+                LAST2="${v4: -2}"
+                LAST2_NUM=$((10#$LAST2))
+                NEXT_V4=$(printf "20%02d" "$LAST2_NUM")
+              else
+                NEXT_V4_NUM=$((10#$v4 + 1))
+                NEXT_V4=$(printf "%04d" "$NEXT_V4_NUM")
+              fi
+
+              VERSION_TAG="$v1.$v2.$v3.$NEXT_V4"
+            fi
+          fi
+
+          echo "VERSION_TAG=$VERSION_TAG" >> $GITHUB_ENV
+          echo "Current build version: $VERSION_TAG"
+
+          git tag -f "$VERSION_TAG"
+          git push origin "$VERSION_TAG" --force
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Patch global.json
+        shell: bash
+        run: |
+          cat > global.json << 'EOF'
+          {
+            "sdk": {
+              "version": "8.0.0",
+              "rollForward": "latestFeature",
+              "allowPrerelease": true
             }
-        }
-        EOF
+          }
+          EOF
 
-    - name: 补丁 4 - 通过 Python 脚本精准重写 AudioService
-      run: |
-        cat > patch_audio.py << 'EOF'
-        import re
+      - name: Patch EdgeTtsSharp LangVersion
+        shell: bash
+        run: |
+          sed -i 's/<LangVersion>13<\/LangVersion>/<LangVersion>preview<\/LangVersion>/g' vendors/EdgeTtsSharp/Edge_tts_sharp/Edge_tts_sharp.csproj || true
+          sed -i 's/<LangVersion>latest<\/LangVersion>/<LangVersion>preview<\/LangVersion>/g' vendors/EdgeTtsSharp/Edge_tts_sharp/Edge_tts_sharp.csproj || true
 
-        with open('ClassIsland/Services/AudioService.cs', 'r', encoding='utf-8') as f:
-            code = f.read()
+      - name: Generate secrets.g.cs
+        shell: bash
+        run: |
+          cat > ClassIsland/secrets.g.cs << 'EOF'
+          namespace ClassIsland.Services.SpeechService { 
+              public static partial class GptSovitsSecrets {
+                  public const string PrivateKey = "";
+                  public const string PrivateKeyPassPhrase = "";
+                  public const bool IsSecretsFilled = false;
+              }
+          }
+          EOF
 
-        # 1. 禁用 MiniAudioEngine 抛出异常的逻辑
-        code = code.replace(
-            "private readonly AudioEngine _audioEngine = Task.Run((() => new MiniAudioEngine())).Result;",
-            "private readonly AudioEngine? _audioEngine = null;"
-        )
-        code = code.replace(
-            "return _audioEngine;",
-            "return _audioEngine ?? throw new PlatformNotSupportedException(\"MiniAudio is disabled on LoongArch\");"
-        )
-        code = code.replace(
-            "throw new InvalidOperationException",
-            "// throw new InvalidOperationException"
-        )
+      - name: Patch AudioService.cs
+        shell: bash
+        run: |
+          cat > ClassIsland/Services/AudioService.cs << 'EOF'
+          using System;
+          using System.Diagnostics;
+          using System.IO;
+          using System.Linq;
+          using System.Runtime.InteropServices;
+          using System.Threading;
+          using System.Threading.Tasks;
+          using ClassIsland.Core;
+          using ClassIsland.Core.Abstractions.Services;
+          using Microsoft.Extensions.Logging;
+          using SoundFlow.Abstracts;
+          using SoundFlow.Abstracts.Devices;
+          using SoundFlow.Backends.MiniAudio;
+          using SoundFlow.Components;
+          using SoundFlow.Enums;
+          using SoundFlow.Providers;
+          using SoundFlow.Structs;
 
-        # 2. 修改 TryInitializeDefaultPlaybackDeviceInternal
-        code = code.replace(
-            "var deviceInfo = AudioEngine.PlaybackDevices.FirstOrDefault(x => x.IsDefault);",
-            "if (_audioEngine == null) return null;\n            var deviceInfo = AudioEngine.PlaybackDevices.FirstOrDefault(x => x.IsDefault);"
-        )
+          namespace ClassIsland.Services;
 
-        # 3. 拦截 PlayAudioAsync(Stream...) 并注入 ffplay 后备逻辑
-        stream_play_original = "using var audioStream = audio;\n        cancellationToken ??= CancellationToken.None;"
-        stream_play_replacement = """cancellationToken ??= CancellationToken.None;
-                if (_audioEngine == null) {
-                    var tempFile = Path.Combine(Path.GetTempPath(), $"ci_audio_{Guid.NewGuid():N}.wav");
-                    try {
-                        using (var fs = File.Create(tempFile)) { audio.CopyTo(fs); }
-                        var args = $"-nodisp -autoexit -volume {(int)(volume * 100)} \\\"{tempFile}\\\"";
-                        var psi = new System.Diagnostics.ProcessStartInfo { FileName = "ffplay", Arguments = args, UseShellExecute = false, CreateNoWindow = true };
-                        using var process = System.Diagnostics.Process.Start(psi);
-                        if (process != null) { process.WaitForExit(); }
-                    } finally { try { File.Delete(tempFile); } catch { } }
-                    return;
-                }
-                using var audioStream = audio;"""
-        code = code.replace(stream_play_original, stream_play_replacement)
+          public class AudioService(ILogger<AudioService> logger) : IAudioService
+          {
+              private readonly AudioEngine? _audioEngine = InitAudioEngine();
+              private ILogger<AudioService> Logger { get; } = logger;
 
-        # 4. 拦截 PlayAudioAsync(string...) 避免多次磁盘 I/O
-        file_play_original = "using var audio = File.OpenRead(filePath);"
-        file_play_replacement = """if (_audioEngine == null) {
-                    var args = $"-nodisp -autoexit -volume {(int)(volume * 100)} \\\"{filePath}\\\"";
-                    var psi = new System.Diagnostics.ProcessStartInfo { FileName = "ffplay", Arguments = args, UseShellExecute = false, CreateNoWindow = true };
-                    using var process = System.Diagnostics.Process.Start(psi);
-                    if (process != null) { process.WaitForExit(); }
-                    return;
-                }
-                using var audio = File.OpenRead(filePath);"""
-        code = code.replace(file_play_original, file_play_replacement)
+              private RefCounted<AudioPlaybackDevice>? _sharedAudioPlaybackDevice;
+              private object _audioPlaybackDeviceInitializeLock = new();
 
-        with open('ClassIsland/Services/AudioService.cs', 'w', encoding='utf-8') as f:
-            f.write(code)
-        EOF
-        python3 patch_audio.py
+              private static AudioEngine? InitAudioEngine()
+              {
+                  try { return Task.Run(() => new MiniAudioEngine()).Result; }
+                  catch (Exception ex)
+                  {
+                      Console.WriteLine($"[AudioService] Audio engine init failed (non-fatal): {ex.InnerException?.Message ?? ex.Message}");
+                      return null;
+                  }
+              }
 
-    - name: 补丁 5 - 动态拦截重启退出逻辑
-      run: |
-        sed -i 's/Environment.ProcessPath/"bash"/g' ClassIsland.Core/AppBase.cs
-        sed -i 's/FileName = "bash"/FileName = "bash", Arguments = "..\/run.sh --foreground"/g' ClassIsland.Core/AppBase.cs
+              private static string? FindSystemPlayer()
+              {
+                  foreach (var player in new[] { "ffplay", "paplay", "aplay" })
+                  {
+                      try
+                      {
+                          var p = Process.Start(new ProcessStartInfo
+                          {
+                              FileName = "which",
+                              Arguments = player,
+                              RedirectStandardOutput = true,
+                              UseShellExecute = false,
+                              CreateNoWindow = true
+                          });
+                          p?.WaitForExit(1000);
+                          if (p?.ExitCode == 0) return player;
+                      }
+                      catch { }
+                  }
+                  return null;
+              }
 
-    - name: 编译发布 ClassIsland
-      run: |
-        dotnet publish ClassIsland.Desktop/ClassIsland.Desktop.csproj \
-          -c Release \
-          --no-self-contained \
-          -p:PublishDir=../output/ClassIsland \
-          -p:PublishBuilding=true \
-          -p:PublishPlatform=linux \
-          -p:Platforms_Linux=true \
-          -p:TrimAssets=false \
-          "-p:ClassIsland_PlatformTarget=Any CPU"
+              public AudioEngine AudioEngine
+              {
+                  get
+                  {
+                      if (_audioEngine == null)
+                          throw new PlatformNotSupportedException("当前平台不支持 SoundFlow 原生音频引擎。");
 
-    - name: 注入原生库和 .NET 运行时
-      run: |
-        mkdir -p output/ClassIsland/runtimes/linux-loongarch64/native/
-        if [ -d "LoongArch-NativeLibs" ]; then
+                      if (OperatingSystem.IsWindows() && Thread.CurrentThread.GetApartmentState() != ApartmentState.MTA)
+                      {
+                          throw new InvalidOperationException(
+                              "出于线程安全考虑，禁止在非 MTA 线程上调用 AudioEngine。请在 MTA 线程上调用 AudioEngine。");
+                      }
+                      return _audioEngine;
+                  }
+              }
+
+              public AudioPlaybackDevice? TryInitializeDefaultPlaybackDevice() =>
+                  TryInitializeDefaultPlaybackDeviceAsync().Result;
+
+              public Task<AudioPlaybackDevice?> TryInitializeDefaultPlaybackDeviceAsync() =>
+                  Task.Run(TryInitializeDefaultPlaybackDeviceInternal);
+
+              public Task<RefCounted<AudioPlaybackDevice>.Lease?> TryInitializeDefaultPlaybackDeviceSafeAsync() => Task.Run(() =>
+              {
+                  lock (_audioPlaybackDeviceInitializeLock)
+                  {
+                      if (_sharedAudioPlaybackDevice?.IsValueDisposed == false)
+                      {
+                          var lease = _sharedAudioPlaybackDevice.Rent();
+                          Logger.LogDebug("使用了缓存的音频设备 {} (Id={})", lease.Value.Info?.Name, lease.Value.Info?.Id);
+                          return lease;
+                      }
+
+                      if (TryInitializeDefaultPlaybackDeviceInternal() is not { } device)
+                      {
+                          return null;
+                      }
+                      _sharedAudioPlaybackDevice = new RefCounted<AudioPlaybackDevice>(device);
+                      var lease2 = _sharedAudioPlaybackDevice.Rent();
+                      _sharedAudioPlaybackDevice.Dispose();
+                      return lease2;
+                  }
+              });
+
+              private AudioPlaybackDevice? TryInitializeDefaultPlaybackDeviceInternal()
+              {
+                  try
+                  {
+                      if (_audioEngine == null) return null;
+
+                      var deviceInfo = AudioEngine.PlaybackDevices.FirstOrDefault(x => x.IsDefault);
+                      if (deviceInfo == default)
+                      {
+                          Logger.LogDebug("找不到可用的音频设备");
+                          return null;
+                      }
+
+                      Logger.LogDebug("初始化音频设备 {} (Id={})", deviceInfo.Name, deviceInfo.Id);
+                      var device = AudioEngine.InitializePlaybackDevice(deviceInfo, IAudioService.DefaultAudioFormat);
+                      device.MasterMixer.Volume = 1.0f;
+                      device.Start();
+                      return device;
+                  }
+                  catch (Exception ex)
+                  {
+                      Logger.LogError(ex, "初始化音频设备失败");
+                      return null;
+                  }
+              }
+
+              public Task PlayAudioAsync(Stream audio, float volume, CancellationToken? cancellationToken = null) => Task.Run(async () =>
+              {
+                  cancellationToken ??= CancellationToken.None;
+
+                  if (_audioEngine == null)
+                  {
+                      await PlayStreamViaSystemAsync(audio, volume);
+                      return;
+                  }
+
+                  using var audioStream = audio;
+                  using var lease = await TryInitializeDefaultPlaybackDeviceSafeAsync();
+                  if (lease == null)
+                  {
+                      return;
+                  }
+
+                  var device = lease.Value;
+                  using var player = new SoundPlayer(AudioEngine, IAudioService.DefaultAudioFormat,
+                      new StreamDataProvider(AudioEngine, IAudioService.DefaultAudioFormat, audio));
+                  player.Volume = volume;
+                  Logger.LogDebug("开始播放音频 {}", audio.GetHashCode());
+                  device.MasterMixer.AddComponent(player);
+                  var tcs = new TaskCompletionSource<bool>();
+
+                  player.PlaybackEnded += OnPlayerOnPlaybackEnded;
+                  cancellationToken.Value.Register(() =>
+                  {
+                      Logger.LogDebug("取消播放音频 {}", audio.GetHashCode());
+                      tcs.TrySetResult(false);
+                  });
+                  player.Play();
+                  tcs.Task.Wait();
+                  Logger.LogDebug("结束播放音频 {}", audio.GetHashCode());
+                  player.PlaybackEnded -= OnPlayerOnPlaybackEnded;
+
+                  return;
+
+                  void OnPlayerOnPlaybackEnded(object? sender, EventArgs args)
+                  {
+                      tcs.TrySetResult(true);
+                  }
+              });
+
+              private async Task PlayStreamViaSystemAsync(Stream audio, float volume)
+              {
+                  var playerName = FindSystemPlayer();
+                  if (playerName == null)
+                  {
+                      Logger.LogWarning("找不到系统音频播放器，无法播放声音。");
+                      return;
+                  }
+
+                  var tempFile = Path.Combine(Path.GetTempPath(), $"ci_audio_{Guid.NewGuid():N}.wav");
+                  try
+                  {
+                      using (var fs = File.Create(tempFile))
+                      {
+                          await audio.CopyToAsync(fs);
+                      }
+                      await RunPlayerAsync(playerName, tempFile, volume);
+                  }
+                  catch (Exception ex)
+                  {
+                      Logger.LogWarning("系统音频播放失败: {Msg}", ex.Message);
+                  }
+                  finally
+                  {
+                      try { File.Delete(tempFile); } catch { }
+                  }
+              }
+
+              public async Task PlayAudioAsync(string filePath, float volume, CancellationToken? cancellationToken = null)
+              {
+                  if (_audioEngine == null && !RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+                  {
+                      var playerName = FindSystemPlayer();
+                      if (playerName == null)
+                      {
+                          Logger.LogWarning("找不到系统音频播放器，无法播放声音。");
+                          return;
+                      }
+                      await RunPlayerAsync(playerName, filePath, volume);
+                      return;
+                  }
+
+                  using var audio = File.OpenRead(filePath);
+                  await PlayAudioAsync(audio, volume, cancellationToken);
+              }
+
+              private async Task RunPlayerAsync(string playerName, string filePath, float volume)
+              {
+                  var args = playerName switch
+                  {
+                      "ffplay" => $"-nodisp -autoexit -volume {(int)(volume * 100)} \"{filePath}\"",
+                      "paplay" => $"--volume {(int)(volume * 65536)} \"{filePath}\"",
+                      _ => $"\"{filePath}\""
+                  };
+
+                  Logger.LogDebug("使用 {Player} 播放音频: {File}", playerName, filePath);
+
+                  var psi = new ProcessStartInfo
+                  {
+                      FileName = playerName,
+                      Arguments = args,
+                      UseShellExecute = false,
+                      CreateNoWindow = true,
+                      RedirectStandardOutput = true,
+                      RedirectStandardError = true
+                  };
+
+                  using var process = Process.Start(psi);
+                  if (process != null)
+                  {
+                      await process.WaitForExitAsync();
+                  }
+              }
+
+              public void Dispose()
+              {
+                  _audioEngine?.Dispose();
+                  GC.SuppressFinalize(this);
+              }
+          }
+          EOF
+
+      - name: Patch restart logic for Linux
+        shell: bash
+        run: |
+          sed -i 's/Environment.ProcessPath/"bash"/g' ClassIsland.Core/AppBase.cs
+          sed -i 's/FileName = "bash"/FileName = "bash", Arguments = "..\/run.sh --foreground"/g' ClassIsland.Core/AppBase.cs
+
+      - name: Publish ClassIsland
+        shell: bash
+        run: |
+          dotnet publish ClassIsland.Desktop/ClassIsland.Desktop.csproj \
+            -c Release \
+            --no-self-contained \
+            -p:PublishDir=../output/ClassIsland \
+            -p:PublishBuilding=true \
+            -p:PublishPlatform=linux \
+            -p:Platforms_Linux=true \
+            -p:TrimAssets=false \
+            "-p:ClassIsland_PlatformTarget=Any CPU"
+
+      - name: Inject native libs and runtime
+        shell: bash
+        run: |
+          mkdir -p output/ClassIsland/runtimes/linux-loongarch64/native/
+          if [ -d "LoongArch-NativeLibs" ]; then
             cp LoongArch-NativeLibs/*.so output/ClassIsland/runtimes/linux-loongarch64/native/ 2>/dev/null || true
             chmod +rx output/ClassIsland/runtimes/linux-loongarch64/native/*.so 2>/dev/null || true
-        fi
-        mkdir -p output/dotnet-runtime
-        if [ -d "LoongArch-Runtime" ]; then
-            tar -xf LoongArch-Runtime/dotnet-runtime-*.tar* -C output/dotnet-runtime/ 2>/dev/null || true
-            chmod +x output/dotnet-runtime/dotnet 2>/dev/null || true
-        fi
+          fi
 
-    - name: 创建一键启动脚本
-      run: |
-        cat > output/run.sh << 'SCRIPT'
-        #!/bin/bash
-        SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-        APP_DIR="$SCRIPT_DIR/ClassIsland"
-        
-        export DOTNET_ROOT="$SCRIPT_DIR/dotnet-runtime"
-        DOTNET="$DOTNET_ROOT/dotnet"
-        
-        export PATH="$DOTNET_ROOT:$PATH:/usr/bin:/usr/local/bin"
-        export DOTNET_CLI_TELEMETRY_OPTOUT=1
-        
-        export DISPLAY=${DISPLAY:-:0}
-        export XAUTHORITY=${XAUTHORITY:-$HOME/.Xauthority}
-        export DBUS_SESSION_BUS_ADDRESS=${DBUS_SESSION_BUS_ADDRESS:-unix:path=/run/user/$(id -u)/bus}
-        export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
-        export XDG_DATA_DIRS=${XDG_DATA_DIRS:-/usr/share:/usr/local/share}
-        
-        [ ! -e "$SCRIPT_DIR/dotnet-runtime/Assets" ] && ln -sf "$APP_DIR/Assets" "$SCRIPT_DIR/dotnet-runtime/Assets"
-        [ ! -e "$SCRIPT_DIR/dotnet-runtime/Config" ] && ln -sf "$APP_DIR/Config" "$SCRIPT_DIR/dotnet-runtime/Config"
-        
-        cd "$APP_DIR"
-        mkdir -p "$SCRIPT_DIR/logs"
-        
-        if [ "$1" = "--foreground" ]; then
-            exec "$DOTNET" ClassIsland.Desktop.dll
-        else
-            nohup "$DOTNET" ClassIsland.Desktop.dll "$@" > "$SCRIPT_DIR/logs/classisland.log" 2>&1 & disown
+          # 运行时直接解压到主程序目录，避免路径问题
+          if [ -d "LoongArch-Runtime" ]; then
+            tar -xf LoongArch-Runtime/dotnet-runtime-*.tar* -C output/ClassIsland/ 2>/dev/null || true
+            chmod +x output/ClassIsland/dotnet 2>/dev/null || true
+          fi
+
+      - name: Create launcher script
+        shell: bash
+        run: |
+          cat > output/run.sh << 'SCRIPT'
+          #!/bin/bash
+          SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+          APP_DIR="$SCRIPT_DIR/ClassIsland"
+
+          export DOTNET_ROOT="$APP_DIR"
+          export PATH="$DOTNET_ROOT:$PATH:/usr/bin:/usr/local/bin"
+          export DOTNET_CLI_TELEMETRY_OPTOUT=1
+
+          export DISPLAY=${DISPLAY:-:0}
+          export XAUTHORITY=${XAUTHORITY:-$HOME/.Xauthority}
+          export DBUS_SESSION_BUS_ADDRESS=${DBUS_SESSION_BUS_ADDRESS:-unix:path=/run/user/$(id -u)/bus}
+          export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
+          export XDG_DATA_DIRS=${XDG_DATA_DIRS:-/usr/share:/usr/local/share}
+
+          cd "$APP_DIR"
+          mkdir -p "$SCRIPT_DIR/logs"
+
+          if [ "$1" = "--foreground" ]; then
+            exec ./dotnet ClassIsland.Desktop.dll
+          else
+            nohup ./dotnet ClassIsland.Desktop.dll "$@" > "$SCRIPT_DIR/logs/classisland.log" 2>&1 & disown
             echo "✅ ClassIsland 已在后台启动，日志位于 logs/classisland.log"
-        fi
-        SCRIPT
-        chmod +x output/run.sh
+          fi
+          SCRIPT
+          chmod +x output/run.sh
 
-    - name: 打包成 tar.gz
-      run: |
-        cd output
-        tar -czvf ../ClassIsland-LoongArch.tar.gz .
+      - name: Package tar.gz
+        shell: bash
+        run: |
+          cd output
+          tar -czvf ../ClassIsland-LoongArch.tar.gz .
 
-    - name: 上传 Artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: ClassIsland-LoongArch-OldWorld
-        path: ClassIsland-LoongArch.tar.gz
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ClassIsland-LoongArch-OldWorld
+          path: ClassIsland-LoongArch.tar.gz
