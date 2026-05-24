@@ -1,6 +1,6 @@
 # ClassIsland - LoongArch (旧世界) 适配版
 
-![Build Status](https://github.com/<YOUR_USERNAME>/ClassIsland/actions/workflows/build-loongarch.yml/badge.svg)
+![Build Status](https://github.com/YU322142/ClassIsland/actions/workflows/build-loongarch.yml/badge.svg)
 ![Platform](https://img.shields.io/badge/Platform-LoongArch64%20(Old%20World)-blue)
 ![.NET](https://img.shields.io/badge/.NET-8.0-purple)
 
@@ -13,14 +13,14 @@
 1. **底层崩溃修复**：彻底放弃 x86 转译，采用原生编译。避开了旧世界 Linux 16KB 内存页导致的 .NET JIT `mprotect` 权限分配崩溃问题。
 2. **图形渲染修复**：官方 NuGet 源缺失 LoongArch 的原生 UI 依赖。本分支内建了提取自原生系统的 `libSkiaSharp.so` 和 `libHarfBuzzSharp.so`，彻底解决黑屏/闪退问题。
 3. **音频引擎重构**：原版使用的 `MiniAudio` 缺少龙芯原生实现会导致启动崩溃。本分支重写了 `AudioService`，智能调用系统底层的 `ffplay`，完美恢复了 EdgeTTS 语音播报及上下课铃声。
-4. **插件完美兼容**：同步深度修改了 [IslandCaller 随机点名插件](https://github.com/HUSX100/IslandCaller)，去除了对 Windows 注册表的依赖（改为 JSON 存储），重写了 Linux X11 协议的悬浮窗置顶逻辑（`_NET_WM_STATE_ABOVE`）及手动拖拽映射，使插件在 Linux 下体验与 Windows 完全一致。
+4. **插件完美兼容**：同步深度修改了 [IslandCaller 随机点名插件](https://github.com/YU322142/IslandCaller-linux/tree/loongarch-support)，去除了对 Windows 注册表的依赖（改为 JSON 存储），重写了 Linux X11 协议的悬浮窗置顶逻辑（`_NET_WM_STATE_ABOVE`）及手动拖拽映射，使插件在 Linux 下体验与 Windows 完全一致。
 
 ## 📥 安装与运行
 
 本仓库已配置自动化构建，你无需在本地折腾复杂的交叉编译环境。
 
 ### 1. 下载发行版
-前往本仓库的 **[Actions](https://github.com/<YOUR_USERNAME>/ClassIsland/actions)** 页面，点击最新一次成功的 Workflow，在底部的 **Artifacts** 处下载 `ClassIsland-LoongArch-OldWorld` 压缩包。
+前往本仓库的 **[Actions](https://github.com/YU322142/ClassIsland/actions)** 页面，点击最新一次成功的 Workflow，在底部的 **Artifacts** 处下载 `ClassIsland-LoongArch-OldWorld` 压缩包。
 
 ### 2. 准备依赖
 本版本使用 `ffmpeg` 作为音频后备播放器，请确保龙芯系统内已安装：
