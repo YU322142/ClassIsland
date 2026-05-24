@@ -23,7 +23,8 @@ $DotNetChannel = "STS"
 $env:DOTNET_CLI_TELEMETRY_OPTOUT = 1
 $env:DOTNET_NOLOGO = 1
 
-if ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq [System.Runtime.InteropServices.Architecture]::LoongArch64) {
+# 兼容老版 PowerShell 的写法：转换为字符串比对
+if ("$([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture)" -eq "LoongArch64") {
     $env:DOTNET_GCConserveMemory = 9
     $env:DOTNET_EnableWriteXorExecute = 0
 }
@@ -41,7 +42,7 @@ if ($null -ne (Get-Command "dotnet" -ErrorAction SilentlyContinue) -and $(dotnet
     $env:DOTNET_EXE = (Get-Command "dotnet").Path
 }
 else {
-    if ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq [System.Runtime.InteropServices.Architecture]::LoongArch64) {
+    if ("$([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture)" -eq "LoongArch64") {
         Write-Error "Error: .NET SDK not found. dotnet-install.ps1 does not support LoongArch64 yet."
         exit 1
     }
