@@ -32,14 +32,18 @@ jobs:
         VERSION_TAG="${{ github.event.inputs.version_tag }}"
         
         if [ -z "$VERSION_TAG" ]; then
-          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "2.0.3.0000")
+          # 寻找当前最新的以数字开头的标签
+          LATEST_TAG=$(git tag -l | grep -E '^[0-9]' | sort -V | tail -n 1 || echo "2.0.3.0000")
           echo "读取到上一次的版本号: $LATEST_TAG"
           
           IFS='.' read -r v1 v2 v3 v4 <<< "$LATEST_TAG"
           v1=${v1:-2}; v2=${v2:-0}; v3=${v3:-3}; v4=${v4:-0}
           
+          # 清理非数字字符，强制十进制
           v4=$(echo "$v4" | sed 's/[^0-9]*//g')
           NEXT_V4=$((10#$v4 + 1))
+          
+          # 强制补足 4 位数字格式
           NEXT_V4_PADDED=$(printf "%04d" $NEXT_V4)
           VERSION_TAG="$v1.$v2.$v3.$NEXT_V4_PADDED"
         fi
@@ -82,40 +86,67 @@ jobs:
         }
         EOF
 
-    - name: 补丁 4 - 动态重写 AudioService 支持龙芯 Linux 播放器
+    - name: 补丁 4 - 通过 Python 脚本精准重写 AudioService
       run: |
-        # 1. 拦截 MiniAudioEngine 初始化
-        sed -i 's/Task.Run((() => new MiniAudioEngine())).Result;/null; \/\/ MiniAudio Disabled on LoongArch/g' ClassIsland/Services/AudioService.cs
-        
-        # 2. 移除原版抛出 PlatformNotSupportedException 的逻辑
-        sed -i '/throw new PlatformNotSupportedException/d' ClassIsland/Services/AudioService.cs
-        
-        # 3. 拦截 TryInitializeDefaultPlaybackDeviceInternal()
-        sed -i 's/var deviceInfo = AudioEngine.PlaybackDevices/if (_audioEngine == null) return null; var deviceInfo = AudioEngine.PlaybackDevices/g' ClassIsland/Services/AudioService.cs
-        
-        # 4. 彻底接管 PlayAudioAsync 逻辑，引入 ffplay 方案
-        # 寻找 public async Task PlayAudioAsync(string filePath... 这行作为注入点
-        sed -i '/public async Task PlayAudioAsync(string filePath/i \
-        private async Task PlayStreamViaSystemAsync(Stream audio, float volume) {\
-            string playerName = "ffplay";\
-            var tempFile = Path.Combine(Path.GetTempPath(), $"ci_audio_{Guid.NewGuid():N}.wav");\
-            try { using (var fs = File.Create(tempFile)) { await audio.CopyToAsync(fs); } await RunPlayerAsync(playerName, tempFile, volume); }\
-            finally { try { File.Delete(tempFile); } catch { } }\
-        }\
-        private async Task RunPlayerAsync(string playerName, string filePath, float volume) {\
-            var args = $"-nodisp -autoexit -volume {(int)(volume * 100)} \"{filePath}\"";\
-            var psi = new System.Diagnostics.ProcessStartInfo { FileName = playerName, Arguments = args, UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };\
-            using var process = System.Diagnostics.Process.Start(psi);\
-            if (process != null) { await process.WaitForExitAsync(); }\
-        }\
-        ' ClassIsland/Services/AudioService.cs
-        
-        # 5. 修改原有的 PlayAudioAsync(Stream...) 使其在 _audioEngine 为空时调用我们写好的系统播放器
-        sed -i 's/cancellationToken ??= CancellationToken.None;/cancellationToken ??= CancellationToken.None; if (_audioEngine == null) { await PlayStreamViaSystemAsync(audio, volume); return; }/g' ClassIsland/Services/AudioService.cs
-        
-        # 6. 修改原有的 PlayAudioAsync(string...) 使其在 _audioEngine 为空时调用我们写好的系统播放器
-        sed -i '/using var audio = File.OpenRead(filePath);/i \
-        if (_audioEngine == null && !System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.Windows)) { await RunPlayerAsync("ffplay", filePath, volume); return; }' ClassIsland/Services/AudioService.cs
+        cat > patch_audio.py << 'EOF'
+        import re
+
+        with open('ClassIsland/Services/AudioService.cs', 'r', encoding='utf-8') as f:
+            code = f.read()
+
+        # 1. 禁用 MiniAudioEngine 抛出异常的逻辑
+        code = code.replace(
+            "private readonly AudioEngine _audioEngine = Task.Run((() => new MiniAudioEngine())).Result;",
+            "private readonly AudioEngine? _audioEngine = null;"
+        )
+        code = code.replace(
+            "return _audioEngine;",
+            "return _audioEngine ?? throw new PlatformNotSupportedException(\"MiniAudio is disabled on LoongArch\");"
+        )
+        code = code.replace(
+            "throw new InvalidOperationException",
+            "// throw new InvalidOperationException"
+        )
+
+        # 2. 修改 TryInitializeDefaultPlaybackDeviceInternal
+        code = code.replace(
+            "var deviceInfo = AudioEngine.PlaybackDevices.FirstOrDefault(x => x.IsDefault);",
+            "if (_audioEngine == null) return null;\n            var deviceInfo = AudioEngine.PlaybackDevices.FirstOrDefault(x => x.IsDefault);"
+        )
+
+        # 3. 拦截 PlayAudioAsync(Stream...) 并注入 ffplay 后备逻辑
+        stream_play_original = "using var audioStream = audio;\n        cancellationToken ??= CancellationToken.None;"
+        stream_play_replacement = """cancellationToken ??= CancellationToken.None;
+                if (_audioEngine == null) {
+                    var tempFile = Path.Combine(Path.GetTempPath(), $"ci_audio_{Guid.NewGuid():N}.wav");
+                    try {
+                        using (var fs = File.Create(tempFile)) { audio.CopyTo(fs); }
+                        var args = $"-nodisp -autoexit -volume {(int)(volume * 100)} \\\"{tempFile}\\\"";
+                        var psi = new System.Diagnostics.ProcessStartInfo { FileName = "ffplay", Arguments = args, UseShellExecute = false, CreateNoWindow = true };
+                        using var process = System.Diagnostics.Process.Start(psi);
+                        if (process != null) { process.WaitForExit(); }
+                    } finally { try { File.Delete(tempFile); } catch { } }
+                    return;
+                }
+                using var audioStream = audio;"""
+        code = code.replace(stream_play_original, stream_play_replacement)
+
+        # 4. 拦截 PlayAudioAsync(string...) 避免多次磁盘 I/O
+        file_play_original = "using var audio = File.OpenRead(filePath);"
+        file_play_replacement = """if (_audioEngine == null) {
+                    var args = $"-nodisp -autoexit -volume {(int)(volume * 100)} \\\"{filePath}\\\"";
+                    var psi = new System.Diagnostics.ProcessStartInfo { FileName = "ffplay", Arguments = args, UseShellExecute = false, CreateNoWindow = true };
+                    using var process = System.Diagnostics.Process.Start(psi);
+                    if (process != null) { process.WaitForExit(); }
+                    return;
+                }
+                using var audio = File.OpenRead(filePath);"""
+        code = code.replace(file_play_original, file_play_replacement)
+
+        with open('ClassIsland/Services/AudioService.cs', 'w', encoding='utf-8') as f:
+            f.write(code)
+        EOF
+        python3 patch_audio.py
 
     - name: 补丁 5 - 动态拦截重启退出逻辑
       run: |
@@ -141,7 +172,6 @@ jobs:
             cp LoongArch-NativeLibs/*.so output/ClassIsland/runtimes/linux-loongarch64/native/ 2>/dev/null || true
             chmod +rx output/ClassIsland/runtimes/linux-loongarch64/native/*.so 2>/dev/null || true
         fi
-        
         mkdir -p output/dotnet-runtime
         if [ -d "LoongArch-Runtime" ]; then
             tar -xf LoongArch-Runtime/dotnet-runtime-*.tar* -C output/dotnet-runtime/ 2>/dev/null || true
@@ -182,7 +212,7 @@ jobs:
         SCRIPT
         chmod +x output/run.sh
 
-    - name: 打包为独立归档文件
+    - name: 打包成 tar.gz
       run: |
         cd output
         tar -czvf ../ClassIsland-LoongArch.tar.gz .
