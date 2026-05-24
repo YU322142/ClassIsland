@@ -14,38 +14,32 @@ jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: write   # 必须授予写入权限，用于推送新的 Version Tag 回代码库
+      contents: write
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
       with:
         submodules: recursive
-        fetch-depth: 0  # 必须为 0，才能拉取完整的 Tag 历史记录
+        fetch-depth: 0
 
-    - name: 补丁 0 - 动态计算版本号并自动递增 (四位后缀)
+    - name: 补丁 0 - 动态计算版本号并自动递增
       run: |
         git config user.email "actions@github.com"
         git config user.name "GitHub Actions"
         
-        # 尝试拉取上游官方 tags 确保基座版本正确
         git fetch --tags https://github.com/ClassIsland/ClassIsland.git || true
         
         VERSION_TAG="${{ github.event.inputs.version_tag }}"
         
         if [ -z "$VERSION_TAG" ]; then
-          # 自动获取最新标签，如果不存在则使用 2.0.3.0000 作为初始值
           LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "2.0.3.0000")
           echo "读取到上一次的版本号: $LATEST_TAG"
           
-          # 以小数点分割版本号
           IFS='.' read -r v1 v2 v3 v4 <<< "$LATEST_TAG"
           v1=${v1:-2}; v2=${v2:-0}; v3=${v3:-3}; v4=${v4:-0}
           
-          # 过滤杂质字符，强制作为 10 进制相加
           v4=$(echo "$v4" | sed 's/[^0-9]*//g')
           NEXT_V4=$((10#$v4 + 1))
-          
-          # 强制补足 4 位数字格式 (如 1 变 0001)
           NEXT_V4_PADDED=$(printf "%04d" $NEXT_V4)
           VERSION_TAG="$v1.$v2.$v3.$NEXT_V4_PADDED"
         fi
@@ -91,84 +85,212 @@ jobs:
     - name: 补丁 4 - 动态重写 AudioService 支持龙芯 Linux 播放器
       run: |
         cat > ClassIsland/Services/AudioService.cs << 'EOF'
-        using System; using System.Diagnostics; using System.IO; using System.Linq; using System.Threading; using System.Threading.Tasks;
-        using ClassIsland.Core.Abstractions.Services; using Microsoft.Extensions.Logging; using SoundFlow.Abstracts; using SoundFlow.Abstracts.Devices;
-        using SoundFlow.Backends.MiniAudio; using SoundFlow.Components; using SoundFlow.Providers; using System.Runtime.InteropServices;
+        using System;
+        using System.Diagnostics;
+        using System.Diagnostics.CodeAnalysis;
+        using System.IO;
+        using System.Linq;
+        using System.Threading;
+        using System.Threading.Tasks;
+        using ClassIsland.Core;
+        using ClassIsland.Core.Abstractions.Services;
+        using Microsoft.Extensions.Logging;
+        using SoundFlow.Abstracts;
+        using SoundFlow.Abstracts.Devices;
+        using SoundFlow.Backends.MiniAudio;
+        using SoundFlow.Components;
+        using SoundFlow.Enums;
+        using SoundFlow.Providers;
+        using SoundFlow.Structs;
+        using System.Runtime.InteropServices;
+
         namespace ClassIsland.Services;
-        public class AudioService(ILogger<AudioService> logger) : IAudioService {
+
+        public class AudioService(ILogger<AudioService> logger) : IAudioService
+        {
             private readonly AudioEngine? _audioEngine = InitAudioEngine();
             private ILogger<AudioService> Logger { get; } = logger;
-            private SoundFlow.Structs.RefCounted<AudioPlaybackDevice>? _sharedAudioPlaybackDevice;
+
+            private RefCounted<AudioPlaybackDevice>? _sharedAudioPlaybackDevice;
             private object _audioPlaybackDeviceInitializeLock = new();
-            private static AudioEngine? InitAudioEngine() {
-                try { return Task.Run(() => new MiniAudioEngine()).Result; } catch { return null; }
+
+            private static AudioEngine? InitAudioEngine()
+            {
+                try { return Task.Run(() => new MiniAudioEngine()).Result; }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[AudioService] Audio engine init failed (non-fatal): {ex.InnerException?.Message ?? ex.Message}");
+                    return null;
+                }
             }
-            private static string? FindSystemPlayer() {
-                foreach (var name in new[] { "ffplay", "paplay", "aplay" }) {
-                    try {
-                        var p = Process.Start(new ProcessStartInfo { FileName = "which", Arguments = name, RedirectStandardOutput = true, UseShellExecute = false, CreateNoWindow = true });
-                        p?.WaitForExit(1000); if (p?.ExitCode == 0) return name;
-                    } catch { }
-                } return null;
+
+            private static string? FindSystemPlayer()
+            {
+                foreach (var player in new[] { "ffplay", "paplay", "aplay" })
+                {
+                    try
+                    {
+                        var p = Process.Start(new ProcessStartInfo { FileName = "which", Arguments = player, RedirectStandardOutput = true, UseShellExecute = false, CreateNoWindow = true });
+                        p?.WaitForExit(1000);
+                        if (p?.ExitCode == 0) return player;
+                    }
+                    catch { }
+                }
+                return null;
             }
-            public AudioEngine AudioEngine => _audioEngine ?? throw new PlatformNotSupportedException("Audio engine not available.");
+
+            public AudioEngine AudioEngine
+            {
+                get
+                {
+                    if (_audioEngine == null) throw new PlatformNotSupportedException("当前平台不支持 SoundFlow 原生音频引擎。");
+                    if (OperatingSystem.IsWindows() && Thread.CurrentThread.GetApartmentState() != ApartmentState.MTA)
+                    {
+                        throw new InvalidOperationException("出于线程安全考虑，禁止在非 MTA 线程上调用 AudioEngine。");
+                    }
+                    return _audioEngine;
+                }
+            }
+
             public AudioPlaybackDevice? TryInitializeDefaultPlaybackDevice() => TryInitializeDefaultPlaybackDeviceAsync().Result;
+
             public Task<AudioPlaybackDevice?> TryInitializeDefaultPlaybackDeviceAsync() => Task.Run(TryInitializeDefaultPlaybackDeviceInternal);
-            public Task<SoundFlow.Structs.RefCounted<AudioPlaybackDevice>.Lease?> TryInitializeDefaultPlaybackDeviceSafeAsync() => Task.Run(() => {
-                lock (_audioPlaybackDeviceInitializeLock) {
-                    if (_sharedAudioPlaybackDevice?.IsValueDisposed == false) return _sharedAudioPlaybackDevice.Rent();
-                    if (TryInitializeDefaultPlaybackDeviceInternal() is not { } device) return null;
-                    _sharedAudioPlaybackDevice = new SoundFlow.Structs.RefCounted<AudioPlaybackDevice>(device);
-                    var lease = _sharedAudioPlaybackDevice.Rent(); _sharedAudioPlaybackDevice.Dispose(); return lease;
+
+            public Task<RefCounted<AudioPlaybackDevice>.Lease?> TryInitializeDefaultPlaybackDeviceSafeAsync() => Task.Run(() =>
+            {
+                lock (_audioPlaybackDeviceInitializeLock)
+                {
+                    if (_sharedAudioPlaybackDevice?.IsValueDisposed == false)
+                    {
+                        return _sharedAudioPlaybackDevice.Rent();
+                    }
+
+                    if (TryInitializeDefaultPlaybackDeviceInternal() is not { } device)
+                    {
+                        return null;
+                    }
+                    _sharedAudioPlaybackDevice = new RefCounted<AudioPlaybackDevice>(device);
+                    var lease2 = _sharedAudioPlaybackDevice.Rent();
+                    _sharedAudioPlaybackDevice.Dispose();
+                    return lease2;
                 }
             });
-            private AudioPlaybackDevice? TryInitializeDefaultPlaybackDeviceInternal() {
-                try {
+
+            private AudioPlaybackDevice? TryInitializeDefaultPlaybackDeviceInternal()
+            {
+                try
+                {
                     if (_audioEngine == null) return null;
-                    var deviceInfo = AudioEngine.PlaybackDevices.FirstOrDefault(x => x.IsDefault);
+
+                    var deviceInfo = _audioEngine.PlaybackDevices.FirstOrDefault(x => x.IsDefault);
                     if (deviceInfo == default) return null;
-                    var device = AudioEngine.InitializePlaybackDevice(deviceInfo, IAudioService.DefaultAudioFormat);
-                    device.MasterMixer.Volume = 1.0f; device.Start(); return device;
-                } catch { return null; }
+
+                    var device = _audioEngine.InitializePlaybackDevice(deviceInfo, IAudioService.DefaultAudioFormat);
+                    device.MasterMixer.Volume = 1.0f;
+                    device.Start();
+                    return device;
+                }
+                catch (Exception ex)
+                {
+                    Logger.LogError(ex, "初始化音频设备失败");
+                    return null;
+                }
             }
-            public Task PlayAudioAsync(Stream audio, float volume, CancellationToken? cancellationToken = null) => Task.Run(async () => {
+
+            public Task PlayAudioAsync(Stream audio, float volume, CancellationToken? cancellationToken = null) => Task.Run(async () =>
+            {
                 cancellationToken ??= CancellationToken.None;
-                if (_audioEngine == null) { await PlayStreamViaSystemAsync(audio, volume); return; }
-                using var audioStream = audio; using var lease = await TryInitializeDefaultPlaybackDeviceSafeAsync();
-                if (lease == null) return; var device = lease.Value;
-                using var player = new SoundPlayer(AudioEngine, IAudioService.DefaultAudioFormat, new StreamDataProvider(AudioEngine, IAudioService.DefaultAudioFormat, audio));
-                player.Volume = volume; device.MasterMixer.AddComponent(player);
+
+                if (_audioEngine == null)
+                {
+                    await PlayStreamViaSystemAsync(audio, volume);
+                    return;
+                }
+
+                using var audioStream = audio;
+                using var lease = await TryInitializeDefaultPlaybackDeviceSafeAsync();
+                if (lease == null) return;
+
+                var device = lease.Value;
+                using var player = new SoundPlayer(AudioEngine, IAudioService.DefaultAudioFormat,
+                    new StreamDataProvider(AudioEngine, IAudioService.DefaultAudioFormat, audio));
+                player.Volume = volume;
+                device.MasterMixer.AddComponent(player);
                 var tcs = new TaskCompletionSource<bool>();
+
                 player.PlaybackEnded += (_, _) => tcs.TrySetResult(true);
                 cancellationToken.Value.Register(() => tcs.TrySetResult(false));
-                player.Play(); tcs.Task.Wait();
+                player.Play();
+                tcs.Task.Wait();
             });
-            private async Task PlayStreamViaSystemAsync(Stream audio, float volume) {
-                var playerName = FindSystemPlayer(); if (playerName == null) return;
+
+            private async Task PlayStreamViaSystemAsync(Stream audio, float volume)
+            {
+                var playerName = FindSystemPlayer();
+                if (playerName == null) { Logger.LogWarning("找不到系统音频播放器。"); return; }
+                
                 var tempFile = Path.Combine(Path.GetTempPath(), $"ci_audio_{Guid.NewGuid():N}.wav");
-                try { using (var fs = File.Create(tempFile)) { await audio.CopyToAsync(fs); } await RunPlayerAsync(playerName, tempFile, volume); }
+                try
+                {
+                    using (var fs = File.Create(tempFile)) { await audio.CopyToAsync(fs); }
+                    await RunPlayerAsync(playerName, tempFile, volume);
+                }
+                catch (Exception ex) { Logger.LogWarning("系统音频播放失败: {Msg}", ex.Message); }
                 finally { try { File.Delete(tempFile); } catch { } }
             }
-            public async Task PlayAudioAsync(string filePath, float volume, CancellationToken? cancellationToken = null) {
-                if (_audioEngine == null) {
-                    var playerName = FindSystemPlayer(); if (playerName == null) return;
-                    await RunPlayerAsync(playerName, filePath, volume); return;
+
+            public async Task PlayAudioAsync(string filePath, float volume, CancellationToken? cancellationToken = null)
+            {
+                if (_audioEngine == null && !RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+                {
+                    var playerName = FindSystemPlayer();
+                    if (playerName == null) { Logger.LogWarning("找不到系统音频播放器。"); return; }
+                    await RunPlayerAsync(playerName, filePath, volume);
+                    return;
                 }
-                using var audio = File.OpenRead(filePath); await PlayAudioAsync(audio, volume, cancellationToken);
+
+                using var audio = File.OpenRead(filePath);
+                await PlayAudioAsync(audio, volume, cancellationToken);
             }
-            private async Task RunPlayerAsync(string playerName, string filePath, float volume) {
-                var args = playerName switch { "ffplay" => $"-nodisp -autoexit -volume {(int)(volume * 100)} \"{filePath}\"", "paplay" => $"--volume {(int)(volume * 65536)} \"{filePath}\"", _ => $"\"{filePath}\"" };
-                using var process = Process.Start(new ProcessStartInfo { FileName = playerName, Arguments = args, UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true });
-                if (process != null) await process.WaitForExitAsync();
+
+            private async Task RunPlayerAsync(string playerName, string filePath, float volume)
+            {
+                var args = playerName switch
+                {
+                    "ffplay" => $"-nodisp -autoexit -volume {(int)(volume * 100)} \"{filePath}\"",
+                    "paplay" => $"--volume {(int)(volume * 65536)} \"{filePath}\"",
+                    _ => $"\"{filePath}\""
+                };
+                
+                Logger.LogDebug("使用 {Player} 播放音频: {File}", playerName, filePath);
+                
+                var psi = new ProcessStartInfo
+                {
+                    FileName = playerName, 
+                    Arguments = args,
+                    UseShellExecute = false, 
+                    CreateNoWindow = true,
+                    RedirectStandardOutput = true, 
+                    RedirectStandardError = true
+                };
+                
+                using var process = Process.Start(psi);
+                if (process != null) 
+                {
+                    await process.WaitForExitAsync();
+                }
             }
-            public void Dispose() { _audioEngine?.Dispose(); GC.SuppressFinalize(this); }
+
+            public void Dispose()
+            {
+                _audioEngine?.Dispose();
+                GC.SuppressFinalize(this);
+            }
         }
         EOF
 
     - name: 补丁 5 - 动态拦截重启退出逻辑
       run: |
-        # 拦截 ClassIsland.Core/AppBase.cs 中的 Process.Start("dotnet", "xxx")
-        # 将其强制转换为在后台执行上一级目录的 run.sh 并附带前台参数
         sed -i 's/Environment.ProcessPath/"bash"/g' ClassIsland.Core/AppBase.cs
         sed -i 's/FileName = "bash"/FileName = "bash", Arguments = "..\/run.sh --foreground"/g' ClassIsland.Core/AppBase.cs
 
@@ -223,9 +345,7 @@ jobs:
         cd "$APP_DIR"
         mkdir -p "$SCRIPT_DIR/logs"
         
-        # 处理重启拦截触发的前台启动逻辑
         if [ "$1" = "--foreground" ]; then
-            # 前台启动，释放主进程，这样重启才能无缝覆盖
             exec "$DOTNET" ClassIsland.Desktop.dll
         else
             nohup "$DOTNET" ClassIsland.Desktop.dll "$@" > "$SCRIPT_DIR/logs/classisland.log" 2>&1 & disown
