@@ -4,6 +4,11 @@ on:
   push:
     branches: [ "master", "main", "dev" ]
   workflow_dispatch:
+    inputs:
+      version_tag:
+        description: '请输入你要构建的版本号 (例如: 2.0.3.2)'
+        required: true
+        default: '2.0.3.2'
 
 jobs:
   build:
@@ -19,8 +24,15 @@ jobs:
       run: |
         git config user.email "actions@github.com"
         git config user.name "GitHub Actions"
-        # 你可以在这里随便改你想要的版本号，编译出来就会显示这个版本
-        git tag 2.0.3.2
+        
+        # 判断如果是手动触发，使用用户输入的版本号；否则如果是 Push 触发，默认使用 2.0.3.2
+        VERSION_TAG="${{ github.event.inputs.version_tag }}"
+        if [ -z "$VERSION_TAG" ]; then
+          VERSION_TAG="2.0.3.2"
+        fi
+        
+        echo "当前构建版本号被设定为: $VERSION_TAG"
+        git tag $VERSION_TAG
 
     - name: Setup .NET 8
       uses: actions/setup-dotnet@v4
@@ -135,7 +147,6 @@ jobs:
 
     - name: 补丁 5 - 动态修复 Linux 重启退出的问题
       run: |
-        # 拦截重启逻辑：将默认执行 dotnet 改为执行上一层目录的 run.sh 脚本
         sed -i 's/Environment.ProcessPath/"bash"/g' ClassIsland.Core/AppBase.cs
         sed -i 's/FileName = "bash"/FileName = "bash", Arguments = "..\/run.sh"/g' ClassIsland.Core/AppBase.cs
 
