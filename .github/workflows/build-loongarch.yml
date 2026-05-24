@@ -6,33 +6,53 @@ on:
   workflow_dispatch:
     inputs:
       version_tag:
-        description: '请输入你要构建的版本号 (例如: 2.0.3.2)'
-        required: true
-        default: '2.0.3.2'
+        description: '手动指定版本号 (例如 2.0.4.0000)，留空则基于历史自动+1'
+        required: false
+        default: ''
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write   # 必须授予写入权限，用于推送新的 Version Tag 回代码库
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
       with:
         submodules: recursive
-        fetch-depth: 0
+        fetch-depth: 0  # 必须为 0，才能拉取完整的 Tag 历史记录
 
-    - name: 补丁 0 - 动态设置自定义版本号
+    - name: 补丁 0 - 动态计算版本号并自动递增 (四位后缀)
       run: |
         git config user.email "actions@github.com"
         git config user.name "GitHub Actions"
         
-        # 判断如果是手动触发，使用用户输入的版本号；否则如果是 Push 触发，默认使用 2.0.3.2
+        # 尝试拉取上游官方 tags 确保基座版本正确
+        git fetch --tags https://github.com/ClassIsland/ClassIsland.git || true
+        
         VERSION_TAG="${{ github.event.inputs.version_tag }}"
+        
         if [ -z "$VERSION_TAG" ]; then
-          VERSION_TAG="2.0.3.2"
+          # 自动获取最新标签，如果不存在则使用 2.0.3.0000 作为初始值
+          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "2.0.3.0000")
+          echo "读取到上一次的版本号: $LATEST_TAG"
+          
+          # 以小数点分割版本号
+          IFS='.' read -r v1 v2 v3 v4 <<< "$LATEST_TAG"
+          v1=${v1:-2}; v2=${v2:-0}; v3=${v3:-3}; v4=${v4:-0}
+          
+          # 过滤杂质字符，强制作为 10 进制相加
+          v4=$(echo "$v4" | sed 's/[^0-9]*//g')
+          NEXT_V4=$((10#$v4 + 1))
+          
+          # 强制补足 4 位数字格式 (如 1 变 0001)
+          NEXT_V4_PADDED=$(printf "%04d" $NEXT_V4)
+          VERSION_TAG="$v1.$v2.$v3.$NEXT_V4_PADDED"
         fi
         
         echo "当前构建版本号被设定为: $VERSION_TAG"
-        git tag $VERSION_TAG
+        git tag -f "$VERSION_TAG"
+        git push origin "$VERSION_TAG" --force
 
     - name: Setup .NET 8
       uses: actions/setup-dotnet@v4
@@ -145,12 +165,14 @@ jobs:
         }
         EOF
 
-    - name: 补丁 5 - 动态修复 Linux 重启退出的问题
+    - name: 补丁 5 - 动态拦截重启退出逻辑
       run: |
+        # 拦截 ClassIsland.Core/AppBase.cs 中的 Process.Start("dotnet", "xxx")
+        # 将其强制转换为在后台执行上一级目录的 run.sh 并附带前台参数
         sed -i 's/Environment.ProcessPath/"bash"/g' ClassIsland.Core/AppBase.cs
-        sed -i 's/FileName = "bash"/FileName = "bash", Arguments = "..\/run.sh"/g' ClassIsland.Core/AppBase.cs
+        sed -i 's/FileName = "bash"/FileName = "bash", Arguments = "..\/run.sh --foreground"/g' ClassIsland.Core/AppBase.cs
 
-    - name: 编译 ClassIsland
+    - name: 编译发布 ClassIsland
       run: |
         dotnet publish ClassIsland.Desktop/ClassIsland.Desktop.csproj \
           -c Release \
@@ -169,13 +191,14 @@ jobs:
             cp LoongArch-NativeLibs/*.so output/ClassIsland/runtimes/linux-loongarch64/native/ 2>/dev/null || true
             chmod +rx output/ClassIsland/runtimes/linux-loongarch64/native/*.so 2>/dev/null || true
         fi
+        
         mkdir -p output/dotnet-runtime
         if [ -d "LoongArch-Runtime" ]; then
             tar -xf LoongArch-Runtime/dotnet-runtime-*.tar* -C output/dotnet-runtime/ 2>/dev/null || true
             chmod +x output/dotnet-runtime/dotnet 2>/dev/null || true
         fi
 
-    - name: 创建一键启动脚本
+    - name: 创建一键启动/重启脚本
       run: |
         cat > output/run.sh << 'SCRIPT'
         #!/bin/bash
@@ -199,12 +222,19 @@ jobs:
         
         cd "$APP_DIR"
         mkdir -p "$SCRIPT_DIR/logs"
-        nohup "$DOTNET" ClassIsland.Desktop.dll "$@" > "$SCRIPT_DIR/logs/classisland.log" 2>&1 & disown
-        echo "✅ ClassIsland 已在后台启动，日志位于 logs/classisland.log"
+        
+        # 处理重启拦截触发的前台启动逻辑
+        if [ "$1" = "--foreground" ]; then
+            # 前台启动，释放主进程，这样重启才能无缝覆盖
+            exec "$DOTNET" ClassIsland.Desktop.dll
+        else
+            nohup "$DOTNET" ClassIsland.Desktop.dll "$@" > "$SCRIPT_DIR/logs/classisland.log" 2>&1 & disown
+            echo "✅ ClassIsland 已在后台启动，日志位于 logs/classisland.log"
+        fi
         SCRIPT
         chmod +x output/run.sh
 
-    - name: 打包成 tar.gz
+    - name: 打包为独立归档文件
       run: |
         cd output
         tar -czvf ../ClassIsland-LoongArch.tar.gz .
