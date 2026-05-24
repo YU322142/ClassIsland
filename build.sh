@@ -10,14 +10,20 @@ SCRIPT_DIR=$(cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd)
 ###########################################################################
 
 BUILD_PROJECT_FILE="$SCRIPT_DIR/build/_build.csproj"
-TEMP_DIRECTORY="$SCRIPT_DIR//.nuke/temp"
+TEMP_DIRECTORY="$SCRIPT_DIR/.nuke/temp"
 
-DOTNET_GLOBAL_FILE="$SCRIPT_DIR//global.json"
+DOTNET_GLOBAL_FILE="$SCRIPT_DIR/global.json"
 DOTNET_INSTALL_URL="https://dot.net/v1/dotnet-install.sh"
 DOTNET_CHANNEL="STS"
 
 export DOTNET_CLI_TELEMETRY_OPTOUT=1
 export DOTNET_NOLOGO=1
+
+# --- LoongArch Old World 适配 ---
+if [[ "$(uname -m)" == "loongarch64" ]]; then
+    export DOTNET_GCConserveMemory=9
+    export DOTNET_EnableWriteXorExecute=0
+fi
 
 ###########################################################################
 # EXECUTION
@@ -27,17 +33,21 @@ function FirstJsonValue {
     perl -nle 'print $1 if m{"'"$1"'": "([^"]+)",?}' <<< "${@:2}"
 }
 
-# If dotnet CLI is installed globally and it matches requested version, use for execution
 if [ -x "$(command -v dotnet)" ] && dotnet --version &>/dev/null; then
     export DOTNET_EXE="$(command -v dotnet)"
 else
-    # Download install script
+    if [[ "$(uname -m)" == "loongarch64" ]]; then
+        echo "❌ Error: .NET SDK not found in PATH."
+        echo "Microsoft dotnet-install.sh does not support LoongArch64 yet."
+        echo "Please install .NET 8 SDK manually."
+        exit 1
+    fi
+
     DOTNET_INSTALL_FILE="$TEMP_DIRECTORY/dotnet-install.sh"
     mkdir -p "$TEMP_DIRECTORY"
     curl -Lsfo "$DOTNET_INSTALL_FILE" "$DOTNET_INSTALL_URL"
     chmod +x "$DOTNET_INSTALL_FILE"
 
-    # If global.json exists, load expected version
     if [[ -f "$DOTNET_GLOBAL_FILE" ]]; then
         DOTNET_VERSION=$(FirstJsonValue "version" "$(cat "$DOTNET_GLOBAL_FILE")")
         if [[ "$DOTNET_VERSION" == ""  ]]; then
@@ -45,7 +55,6 @@ else
         fi
     fi
 
-    # Install by channel or version
     DOTNET_DIRECTORY="$TEMP_DIRECTORY/dotnet-unix"
     if [[ -z ${DOTNET_VERSION+x} ]]; then
         "$DOTNET_INSTALL_FILE" --install-dir "$DOTNET_DIRECTORY" --channel "$DOTNET_CHANNEL" --no-path
