@@ -95,7 +95,7 @@ jobs:
           cat > global.json << 'EOF'
           {
             "sdk": {
-              "version": "8.0.0",
+              "version": "8.0.100",
               "rollForward": "latestFeature",
               "allowPrerelease": true
             }
@@ -393,6 +393,7 @@ jobs:
           dotnet publish ClassIsland.Desktop/ClassIsland.Desktop.csproj \
             -c Release \
             --no-self-contained \
+            -p:UseAppHost=false \
             -p:PublishDir=../output/ClassIsland \
             -p:PublishBuilding=true \
             -p:PublishPlatform=linux \
