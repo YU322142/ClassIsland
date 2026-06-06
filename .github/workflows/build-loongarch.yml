@@ -384,8 +384,42 @@ jobs:
       - name: Patch restart logic for Linux
         shell: bash
         run: |
-          sed -i 's/Environment.ProcessPath/"bash"/g' ClassIsland.Core/AppBase.cs
-          sed -i 's/FileName = "bash"/FileName = "bash", Arguments = "..\/run.sh --foreground"/g' ClassIsland.Core/AppBase.cs
+          python3 <<'PY'
+          from pathlib import Path
+
+          path = Path("ClassIsland/App.axaml.cs")
+          text = path.read_text(encoding="utf-8")
+          old = "\n".join([
+              '        var replaced = path.Replace(".dll", PlatformExecutableExtension);',
+              '        var startInfo = new ProcessStartInfo(restartToLauncher ? ExecutingEntrance : replaced);',
+              '        foreach (var i in parameters)',
+              '        {',
+              '            startInfo.ArgumentList.Add(i);',
+              '        }',
+              '        Process.Start(startInfo);',
+          ]) + "\n"
+          new = "\n".join([
+              '        var replaced = path.Replace(".dll", PlatformExecutableExtension);',
+              '        var restartTarget = restartToLauncher ? ExecutingEntrance : replaced;',
+              '        var startInfo = new ProcessStartInfo(restartTarget);',
+              '        if (string.Equals(Path.GetFileNameWithoutExtension(restartTarget), "dotnet", StringComparison.OrdinalIgnoreCase))',
+              '        {',
+              '            var appDir = Path.GetDirectoryName(path) ?? Environment.CurrentDirectory;',
+              '            startInfo.WorkingDirectory = appDir;',
+              '            startInfo.ArgumentList.Add(Path.Combine(appDir, "ClassIsland.Desktop.dll"));',
+              '        }',
+              '        foreach (var i in parameters)',
+              '        {',
+              '            startInfo.ArgumentList.Add(i);',
+              '        }',
+              '        Process.Start(startInfo);',
+          ]) + "\n"
+
+          if old not in text:
+              raise SystemExit("Restart block not found; upstream code may have changed.")
+
+          path.write_text(text.replace(old, new), encoding="utf-8")
+          PY
 
       - name: Publish ClassIsland
         shell: bash
@@ -438,7 +472,8 @@ jobs:
           mkdir -p "$SCRIPT_DIR/logs"
 
           if [ "$1" = "--foreground" ]; then
-            exec ./dotnet ClassIsland.Desktop.dll
+            shift
+            exec ./dotnet ClassIsland.Desktop.dll "$@"
           else
             nohup ./dotnet ClassIsland.Desktop.dll "$@" > "$SCRIPT_DIR/logs/classisland.log" 2>&1 & disown
             echo "✅ ClassIsland 已在后台启动，日志位于 logs/classisland.log"
