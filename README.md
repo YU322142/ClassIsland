@@ -60,4 +60,3 @@ tail -f logs/classisland.log
 
 - **核心程序**：[ClassIsland](https://github.com/ClassIsland/ClassIsland)
 - 本分支代码继承原项目的开源协议，仅供学习、交流与教育场景使用。
-```
