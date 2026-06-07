@@ -280,8 +280,9 @@ function Try-PrepareGitSource {
             throw "Could not resolve HEAD for $Branch."
         }
 
-        $null = Invoke-Native git -C $RepoDir config submodule.vendors/EdgeTtsSharp.url https://github.com/ClassIsland/EdgeTtsSharp.git
-        $null = Invoke-Native git -C $RepoDir submodule sync -- vendors/EdgeTtsSharp
+        $null = Invoke-Native git -C $RepoDir config url.https://github.com/.insteadOf git@github.com:
+        $null = Invoke-Native git -C $RepoDir config -f .gitmodules submodule.vendors/EdgeTtsSharp.url https://github.com/ClassIsland/EdgeTtsSharp.git
+        $null = Invoke-Native git -C $RepoDir submodule sync --recursive -- vendors/EdgeTtsSharp
         $null = Invoke-Native git -C $RepoDir submodule update --init --recursive -- vendors/EdgeTtsSharp
         return $Commit
     }
