@@ -1,0 +1,63 @@
+name: Build LoongArch old-world ABI1.0 package
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: ClassIsland branch to package
+        required: true
+        default: develop/v2/misha-alpha
+      avaloniaVersion:
+        description: Avalonia version used by the dynamic patch
+        required: true
+        default: 12.0.4
+  push:
+    branches:
+      - develop/v2/misha-alpha
+      - develop/v2/misha-alpha-ci
+    paths:
+      - tools/loongarch-oldworld/**
+      - .github/workflows/build-loongarch-oldworld.yml
+
+jobs:
+  package:
+    runs-on: windows-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Setup .NET 10 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Package ClassIsland
+        shell: pwsh
+        env:
+          API_SIGNING_KEY: ${{ secrets.API_SIGNING_KEY }}
+          API_SIGNING_KEY_PS: ${{ secrets.API_SIGNING_KEY_PS }}
+        run: |
+          $branch = "${{ github.event.inputs.branch }}"
+          if ([string]::IsNullOrWhiteSpace($branch)) {
+            $branch = "${{ github.ref_name }}"
+          }
+          $avaloniaVersion = "${{ github.event.inputs.avaloniaVersion }}"
+          if ([string]::IsNullOrWhiteSpace($avaloniaVersion)) {
+            $avaloniaVersion = "12.0.4"
+          }
+          tools/loongarch-oldworld/Build-ClassIsland-LoongArchOldWorld.ps1 `
+            -RepoUrl "https://github.com/${{ github.repository }}.git" `
+            -Branches $branch `
+            -AvaloniaVersion $avaloniaVersion
+
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: ClassIsland-linux-loongarch64-oldworld
+          path: |
+            artifacts/loongarch-oldworld/out/*.tar.gz
+          if-no-files-found: error
