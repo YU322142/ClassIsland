@@ -325,6 +325,10 @@ function Replace-RequiredLiteral {
         [string]$Description
     )
 
+    $Text = $Text -replace "`r`n", "`n" -replace "`r", "`n"
+    $Search = $Search -replace "`r`n", "`n" -replace "`r", "`n"
+    $Replacement = $Replacement -replace "`r`n", "`n" -replace "`r", "`n"
+
     if (-not $Text.Contains($Search)) {
         throw "Could not patch $Description. Upstream ClassIsland source may have changed."
     }
