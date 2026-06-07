@@ -40,6 +40,7 @@ jobs:
         env:
           API_SIGNING_KEY: ${{ secrets.API_SIGNING_KEY }}
           API_SIGNING_KEY_PS: ${{ secrets.API_SIGNING_KEY_PS }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           $branch = "${{ github.event.inputs.branch }}"
           if ([string]::IsNullOrWhiteSpace($branch)) {
@@ -52,6 +53,7 @@ jobs:
           tools/loongarch-oldworld/Build-ClassIsland-LoongArchOldWorld.ps1 `
             -RepoUrl "https://github.com/${{ github.repository }}.git" `
             -Branches $branch `
+            -SourceMode git `
             -AvaloniaVersion $avaloniaVersion
 
       - name: Upload package

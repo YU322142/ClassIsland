@@ -11,6 +11,7 @@ param(
     [string]$SkiaSharpNativeAssetsVersionOverride,
     [string]$HarfBuzzSharpNativeAssetsVersionOverride,
     [string]$NativeAssetsDir,
+    [string]$GitHubToken = $env:GITHUB_TOKEN,
     [switch]$RequireGptSovitsSigningKey
 )
 
@@ -101,7 +102,18 @@ function Invoke-GitHubApi {
         [string]$Uri
     )
 
-    $Json = curl.exe --fail --silent --show-error --location --ipv4 --retry 8 --retry-all-errors --retry-delay 2 --connect-timeout 30 --max-time 120 --ssl-no-revoke $Uri
+    $Args = @(
+        "--fail", "--silent", "--show-error", "--location", "--ipv4",
+        "--retry", "8", "--retry-all-errors", "--retry-delay", "2",
+        "--connect-timeout", "30", "--max-time", "120", "--ssl-no-revoke",
+        "-H", "X-GitHub-Api-Version: 2022-11-28"
+    )
+    if (-not [string]::IsNullOrWhiteSpace($GitHubToken)) {
+        $Args += @("-H", "Authorization: Bearer $GitHubToken")
+    }
+    $Args += $Uri
+
+    $Json = curl.exe @Args
     if ($LASTEXITCODE -ne 0) {
         throw "GitHub API request failed for $Uri with code $LASTEXITCODE"
     }
