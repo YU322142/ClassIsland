@@ -63,7 +63,7 @@ jobs:
           tools/loongarch-oldworld/Build-ClassIsland-LoongArchOldWorld.ps1 `
             -RepoUrl "https://github.com/${{ github.repository }}.git" `
             -Branches $branch `
-            -SourceMode git `
+            -SourceMode auto `
             -AvaloniaVersion $avaloniaVersion `
             -NativeAssetsDir "$env:GITHUB_WORKSPACE\artifacts\loongarch-oldworld\online-native"
 
