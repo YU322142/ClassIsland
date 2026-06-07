@@ -37,7 +37,17 @@ The online build sources are:
 
 They default to the matching Linux x64 old-world GCC 14 toolchain and full old-world development sysroot published by `YU322142/loongarch-oldworld-sysroot`. The support-library workflows pass `--sysroot` directly to that uploaded sysroot, so the normal online build does not rely on public cross-tools bundled sysroots.
 
-The ClassIsland workflow downloads the latest successful online artifacts from those two repositories and uses them for packaging. After the online artifacts pass VM testing, they can be copied back into `tools/loongarch-oldworld/native/linux-loongarch64/oldworld/` as the prebuilt default.
+The ClassIsland workflow uses the bundled, VM-verified prebuilt `.so` files by default. To re-test online Actions artifacts, manually run the workflow with `useOnlineNativeAssets` set to `true`; the workflow then downloads the latest successful online artifacts from the two support-library repositories and uses them for packaging. After those online artifacts pass VM testing, copy the verified `.so` files back into `tools/loongarch-oldworld/native/linux-loongarch64/oldworld/` as the new prebuilt default.
+
+The current prebuilt default comes from these verified online builds:
+
+```text
+SkiaSharp: YU322142/SkiaSharp-Loongarch-ABI1.0 run 27100071183
+libSkiaSharp.so SHA256: 8E6420772C0AE0E5D61F84D34800D88455D425EF941591117C1E1A86600C7246
+
+HarfBuzzSharp: YU322142/harfbuzz-Loongarch-ABI1.0 run 27099940796
+libHarfBuzzSharp.so SHA256: D94A261287A0A21E84C2F01FA2D1F5B5F461A9704103061C4ABD63280AEFD1FE
+```
 
 ## Local packaging
 
