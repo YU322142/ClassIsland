@@ -1,5 +1,21 @@
-龙芯旧世界 ABI1.0 原生库构建记录
-生成时间: 2026-06-07 19:14:55 +08:00
+ClassIsland 龙芯旧世界 ABI1.0 预编译原生库记录
+ClassIsland LoongArch old-world ABI1.0 prebuilt native asset manifest
+
+生成时间: 2026-06-08 04:10:00 +08:00
+说明: 当前预编译默认版本来自线上 GitHub Actions 构建，并已在可视化 QEMU Loongnix 20 X11 虚拟机中随 ClassIsland misha-alpha 与 misha-alpha-ci 测试通过。
+
+支持库来源:
+  SkiaSharp 仓库: https://github.com/YU322142/SkiaSharp-Loongarch-ABI1.0
+  SkiaSharp run: 27100071183
+  SkiaSharp URL: https://github.com/YU322142/SkiaSharp-Loongarch-ABI1.0/actions/runs/27100071183
+  SkiaSharp head: 0adc7719d6022e296cf92731490db2318b104c82
+  SkiaSharp artifact: libSkiaSharp-linux-loongarch64-oldworld
+
+  HarfBuzzSharp 仓库: https://github.com/YU322142/harfbuzz-Loongarch-ABI1.0
+  HarfBuzzSharp run: 27099940796
+  HarfBuzzSharp URL: https://github.com/YU322142/harfbuzz-Loongarch-ABI1.0/actions/runs/27099940796
+  HarfBuzzSharp head: d2870be422dd2149c0b924257b507605969bc7be
+  HarfBuzzSharp artifact: libHarfBuzzSharp-linux-loongarch64-oldworld
 
 源码:
   SkiaSharp 仓库: https://github.com/mono/SkiaSharp.git
@@ -7,12 +23,14 @@
   SkiaSharp commit: f568ac94dd768ef9a2f593537cfde2dd0d348ef5
   HarfBuzzSharp 说明: 从 SkiaSharp 的 HarfBuzzSharp 原生目标构建，不是普通上游 libharfbuzz.so。
 
-工具链:
-  目标: loongarch64-unknown-linux-gnu 旧世界 ABI1.0
-  GCC: 14.2.0
-  Sysroot 来源: cross-tools 内置 sysroot
+工具链与 sysroot:
+  工具链 URL: https://github.com/YU322142/loongarch-oldworld-sysroot/releases/download/oldworld-dev-sysroot-20260607/linux-x64-cross-tools-loongarch64-oldworld-gcc14-20260607.tar.xz
+  工具链 SHA256: 78335E5FCE4FDD6505B23734C539304547753FA1887CC199F5EA0C7554ED0185
+  GCC: loongarch64-unknown-linux-gnu-gcc 14.2.0
+  sysroot URL: https://github.com/YU322142/loongarch-oldworld-sysroot/releases/download/oldworld-dev-sysroot-20260607/loongarch64-oldworld-dev-sysroot-20260607.tar.xz
+  sysroot SHA256: 5D442178DB80F8C1BC599B5C0E5963071BBBB33270DE05747959ADC65E7BC086
 
-GN 功能配置:
+SkiaSharp GN 功能配置:
   target_os=linux
   target_cpu=loong64
   skia_enable_ganesh=true
@@ -22,13 +40,17 @@ GN 功能配置:
   skia_use_fontconfig=true
   skia_use_freetype=true
   skia_enable_skottie=true
-  内置编解码依赖: expat/freetype/libjpeg-turbo/libpng/libwebp/zlib
-  libstdc++/libgcc: 静态链接
+  内置编解码依赖=true
+  libstdc++/libgcc=静态链接
 
 产物:
-  DE470E4CD65B35BB2B35F9746CD519BED690597476922361D7957CBF28625554  libSkiaSharp.so
-  19AD258BB1E707EEA973E5CECCCA726A4B69E956405DB18612F4B770D23C1150  libHarfBuzzSharp.so
+  8E6420772C0AE0E5D61F84D34800D88455D425EF941591117C1E1A86600C7246  libSkiaSharp.so
+  D94A261287A0A21E84C2F01FA2D1F5B5F461A9704103061C4ABD63280AEFD1FE  libHarfBuzzSharp.so
 
 ABI 检查:
-  libSkiaSharp.so: LoongArch LP64, SONAME libSkiaSharp.so.119.0.0, 最高 GLIBC <= 2.27, 符号版本: GLIBC_2.0, GLIBC_2.2, GLIBC_2.27, GLIBC_2.3.2
-  libHarfBuzzSharp.so: LoongArch LP64, SONAME libHarfBuzzSharp.so.0.60831.0, 最高 GLIBC <= 2.27, 符号版本: GLIBC_2.0, GLIBC_2.27, GLIBC_2.3.2
+  libSkiaSharp.so: LoongArch LP64, SONAME libSkiaSharp.so.119.0.0, 最高 GLIBC=2.27, 符号版本: GLIBC_2.0, GLIBC_2.2, GLIBC_2.3.2, GLIBC_2.27
+  libHarfBuzzSharp.so: LoongArch LP64, SONAME libHarfBuzzSharp.so.0.60831.0, 最高 GLIBC=2.27, 符号版本: GLIBC_2.0, GLIBC_2.3.2, GLIBC_2.27
+
+验证:
+  develop/v2/misha-alpha: 渲染正常，托盘菜单正常，网络可用，声音可听见。
+  develop/v2/misha-alpha-ci: 渲染正常，托盘菜单正常，网络可用，声音可听见。

@@ -36,7 +36,17 @@ tools/loongarch-oldworld/native/linux-loongarch64/oldworld/
 
 默认使用 `YU322142/loongarch-oldworld-sysroot` 发布的 Linux x64 旧世界 GCC 14 工具链和完整旧世界开发 sysroot。支持库 workflow 会直接把 `--sysroot` 指向该上传的 sysroot，正常在线构建不再依赖公开 cross-tools 自带 sysroot。
 
-ClassIsland workflow 会下载这两个仓库最新成功的线上 Actions artifact，并使用这些线上原生库进行打包。线上产物在 VM 中测试没问题后，再把通过验证的 `.so` 固化回 `tools/loongarch-oldworld/native/linux-loongarch64/oldworld/` 作为预编译默认版本。
+ClassIsland workflow 默认使用仓库内已经过 VM 验证的预编译 `.so`。如需重新验证线上 Actions 产物，可在手动运行 workflow 时将 `useOnlineNativeAssets` 设为 `true`，workflow 会下载这两个仓库最新成功的线上 Actions artifact 并用它们打包。线上产物在 VM 中测试没问题后，再把通过验证的 `.so` 固化回 `tools/loongarch-oldworld/native/linux-loongarch64/oldworld/` 作为新的预编译默认版本。
+
+当前预编译默认版本来自以下已验证的线上构建：
+
+```text
+SkiaSharp: YU322142/SkiaSharp-Loongarch-ABI1.0 run 27100071183
+libSkiaSharp.so SHA256: 8E6420772C0AE0E5D61F84D34800D88455D425EF941591117C1E1A86600C7246
+
+HarfBuzzSharp: YU322142/harfbuzz-Loongarch-ABI1.0 run 27099940796
+libHarfBuzzSharp.so SHA256: D94A261287A0A21E84C2F01FA2D1F5B5F461A9704103061C4ABD63280AEFD1FE
+```
 
 ## 本地打包
 

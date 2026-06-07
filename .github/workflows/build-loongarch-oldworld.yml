@@ -11,6 +11,10 @@ on:
         description: Avalonia version used by the dynamic patch
         required: true
         default: 12.0.4
+      useOnlineNativeAssets:
+        description: Download latest online native artifacts instead of bundled prebuilt native libraries
+        required: true
+        default: "false"
   push:
     branches:
       - develop/v2/misha-alpha
@@ -36,6 +40,7 @@ jobs:
           dotnet-version: 10.0.x
 
       - name: Download online native libraries
+        if: ${{ github.event.inputs.useOnlineNativeAssets == 'true' }}
         shell: pwsh
         env:
           GITHUB_TOKEN: ${{ secrets.ACTIONS_DOWNLOAD_TOKEN || github.token }}
@@ -60,12 +65,16 @@ jobs:
           if ([string]::IsNullOrWhiteSpace($avaloniaVersion)) {
             $avaloniaVersion = "12.0.4"
           }
-          tools/loongarch-oldworld/Build-ClassIsland-LoongArchOldWorld.ps1 `
-            -RepoUrl "https://github.com/${{ github.repository }}.git" `
-            -Branches $branch `
-            -SourceMode auto `
-            -AvaloniaVersion $avaloniaVersion `
-            -NativeAssetsDir "$env:GITHUB_WORKSPACE\artifacts\loongarch-oldworld\online-native"
+          $buildArgs = @{
+            RepoUrl = "https://github.com/${{ github.repository }}.git"
+            Branches = $branch
+            SourceMode = "auto"
+            AvaloniaVersion = $avaloniaVersion
+          }
+          if ("${{ github.event.inputs.useOnlineNativeAssets }}" -eq "true") {
+            $buildArgs.NativeAssetsDir = "$env:GITHUB_WORKSPACE\artifacts\loongarch-oldworld\online-native"
+          }
+          tools/loongarch-oldworld/Build-ClassIsland-LoongArchOldWorld.ps1 @buildArgs
 
       - name: Upload package
         uses: actions/upload-artifact@v4
