@@ -1149,17 +1149,14 @@ function Apply-LoongArchPatch {
 
     $AppText = (Read-Utf8Text -Path $AppCode) -replace "`r`n", "`n"
     if ($AppText -notmatch "PLATFORM_LOONGARCH64") {
-        $Search = @'
-#elif PLATFORM_ARM
-    "arm"
-'@
-        $Replacement = @'
-#elif PLATFORM_ARM
-    "arm"
-#elif PLATFORM_LOONGARCH64
-    "loongarch64"
-'@
-        $AppText = Replace-RequiredLiteral -Text $AppText -Search $Search -Replacement $Replacement -Description "ClassIsland LoongArch platform name"
+        $Pattern = '(?m)^#elif\s+PLATFORM_ARM\s*\n\s*"arm"\s*$'
+        if ($AppText -notmatch $Pattern) {
+            throw "Could not patch ClassIsland LoongArch platform name. Upstream ClassIsland source may have changed."
+        }
+        $AppText = [regex]::Replace($AppText, $Pattern, {
+            param($m)
+            $m.Value + "`n#elif PLATFORM_LOONGARCH64`n    `"loongarch64`""
+        }, 1)
         Set-TextIfChanged -Path $AppCode -Content $AppText
     }
 
