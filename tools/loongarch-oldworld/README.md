@@ -35,7 +35,7 @@ The online build sources are:
 - `YU322142/SkiaSharp-Loongarch-ABI1.0` `main`
 - `YU322142/harfbuzz-Loongarch-ABI1.0` `main`
 
-They default to the `loong64/cross-tools` `baseline` toolchain and its bundled sysroot. A separate sysroot upload is not required for the normal build. If a future build needs a fixed Loongnix sysroot, use the support-library workflow overrides `SYSROOT_URL` and `SYSROOT_SHA256`.
+They default to the matching Linux x64 old-world GCC 14 toolchain and full old-world development sysroot published by `YU322142/loongarch-oldworld-sysroot`. The support-library workflows pass `--sysroot` directly to that uploaded sysroot, so the normal online build does not rely on public cross-tools bundled sysroots.
 
 The ClassIsland workflow downloads the latest successful online artifacts from those two repositories and uses them for packaging. After the online artifacts pass VM testing, they can be copied back into `tools/loongarch-oldworld/native/linux-loongarch64/oldworld/` as the prebuilt default.
 
