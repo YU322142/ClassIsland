@@ -37,6 +37,8 @@ The online build sources are:
 
 They default to the `loong64/cross-tools` `baseline` toolchain and its bundled sysroot. A separate sysroot upload is not required for the normal build. If a future build needs a fixed Loongnix sysroot, use the support-library workflow overrides `SYSROOT_URL` and `SYSROOT_SHA256`.
 
+The ClassIsland workflow downloads the latest successful online artifacts from those two repositories and uses them for packaging. After the online artifacts pass VM testing, they can be copied back into `tools/loongarch-oldworld/native/linux-loongarch64/oldworld/` as the prebuilt default.
+
 ## Local packaging
 
 From the ClassIsland fork root:

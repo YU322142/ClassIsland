@@ -36,6 +36,8 @@ tools/loongarch-oldworld/native/linux-loongarch64/oldworld/
 
 默认使用 `loong64/cross-tools` 的 `baseline` 工具链和其内置 sysroot。正常情况下不需要单独上传 sysroot。
 
+ClassIsland workflow 会下载这两个仓库最新成功的线上 Actions artifact，并使用这些线上原生库进行打包。线上产物在 VM 中测试没问题后，再把通过验证的 `.so` 固化回 `tools/loongarch-oldworld/native/linux-loongarch64/oldworld/` 作为预编译默认版本。
+
 ## 本地打包
 
 在 ClassIsland fork 根目录执行：

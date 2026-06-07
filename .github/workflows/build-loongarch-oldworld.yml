@@ -22,7 +22,7 @@ on:
 jobs:
   package:
     runs-on: windows-latest
-    timeout-minutes: 120
+    timeout-minutes: 240
 
     steps:
       - name: Checkout
@@ -34,6 +34,16 @@ jobs:
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
+
+      - name: Download online native libraries
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.ACTIONS_DOWNLOAD_TOKEN || github.token }}
+        run: |
+          tools/loongarch-oldworld/Get-OnlineNativeAssets.ps1 `
+            -OutputDir "$env:GITHUB_WORKSPACE\artifacts\loongarch-oldworld\online-native" `
+            -Wait `
+            -TimeoutMinutes 180
 
       - name: Package ClassIsland
         shell: pwsh
@@ -54,7 +64,8 @@ jobs:
             -RepoUrl "https://github.com/${{ github.repository }}.git" `
             -Branches $branch `
             -SourceMode git `
-            -AvaloniaVersion $avaloniaVersion
+            -AvaloniaVersion $avaloniaVersion `
+            -NativeAssetsDir "$env:GITHUB_WORKSPACE\artifacts\loongarch-oldworld\online-native"
 
       - name: Upload package
         uses: actions/upload-artifact@v4
