@@ -1,18 +1,18 @@
-LoongArch old-world ABI1.0 native library build
-Generated: 2026-06-07 19:14:55 +08:00
+龙芯旧世界 ABI1.0 原生库构建记录
+生成时间: 2026-06-07 19:14:55 +08:00
 
-Source:
-  SkiaSharp repository: https://github.com/mono/SkiaSharp.git
+源码:
+  SkiaSharp 仓库: https://github.com/mono/SkiaSharp.git
   SkiaSharp ref: v3.119.4
   SkiaSharp commit: f568ac94dd768ef9a2f593537cfde2dd0d348ef5
-  HarfBuzzSharp note: built from the SkiaSharp HarfBuzzSharp native target, not a plain upstream libharfbuzz.so.
+  HarfBuzzSharp 说明: 从 SkiaSharp 的 HarfBuzzSharp 原生目标构建，不是普通上游 libharfbuzz.so。
 
-Toolchain:
-  Target: loongarch64-unknown-linux-gnu old-world ABI1.0
+工具链:
+  目标: loongarch64-unknown-linux-gnu 旧世界 ABI1.0
   GCC: 14.2.0
-  Sysroot source: cross-tools bundled sysroot
+  Sysroot 来源: cross-tools 内置 sysroot
 
-GN feature intent:
+GN 功能配置:
   target_os=linux
   target_cpu=loong64
   skia_enable_ganesh=true
@@ -22,13 +22,13 @@ GN feature intent:
   skia_use_fontconfig=true
   skia_use_freetype=true
   skia_enable_skottie=true
-  bundled codecs: expat/freetype/libjpeg-turbo/libpng/libwebp/zlib
-  libstdc++/libgcc: static linked
+  内置编解码依赖: expat/freetype/libjpeg-turbo/libpng/libwebp/zlib
+  libstdc++/libgcc: 静态链接
 
-Outputs:
+产物:
   DE470E4CD65B35BB2B35F9746CD519BED690597476922361D7957CBF28625554  libSkiaSharp.so
   19AD258BB1E707EEA973E5CECCCA726A4B69E956405DB18612F4B770D23C1150  libHarfBuzzSharp.so
 
-ABI checks:
-  libSkiaSharp.so: LoongArch LP64, SONAME libSkiaSharp.so.119.0.0, max GLIBC <= 2.27, versions: GLIBC_2.0, GLIBC_2.2, GLIBC_2.27, GLIBC_2.3.2
-  libHarfBuzzSharp.so: LoongArch LP64, SONAME libHarfBuzzSharp.so.0.60831.0, max GLIBC <= 2.27, versions: GLIBC_2.0, GLIBC_2.27, GLIBC_2.3.2
+ABI 检查:
+  libSkiaSharp.so: LoongArch LP64, SONAME libSkiaSharp.so.119.0.0, 最高 GLIBC <= 2.27, 符号版本: GLIBC_2.0, GLIBC_2.2, GLIBC_2.27, GLIBC_2.3.2
+  libHarfBuzzSharp.so: LoongArch LP64, SONAME libHarfBuzzSharp.so.0.60831.0, 最高 GLIBC <= 2.27, 符号版本: GLIBC_2.0, GLIBC_2.27, GLIBC_2.3.2
