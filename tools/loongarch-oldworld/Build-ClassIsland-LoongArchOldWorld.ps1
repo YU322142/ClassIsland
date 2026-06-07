@@ -973,13 +973,18 @@ function Install-ClassIslandNativeAssets {
     )
 
     $NativeBuildManifest = Join-Path $NativeAssetsDir "native-build-manifest.txt"
+    $NativeAssetSourceKind = if (Test-Path -LiteralPath $NativeBuildManifest) {
+        "old-world ABI1 native assets with build manifest"
+    } else {
+        "old-world ABI1 native assets"
+    }
     $Records = @()
     foreach ($Asset in $Assets) {
         $ManagedVersion = Get-ClassIslandDependencyVersion -DepsJson $DepsJson -PackageId $Asset.ManagedPackageId
         $NativeVersion = Get-ClassIslandDependencyVersion -DepsJson $DepsJson -PackageId $Asset.NativePackageId
         $Source = Join-Path $NativeAssetsDir $Asset.FileName
         if (-not (Test-Path -LiteralPath $Source)) {
-            throw "Native asset verification failed; missing self-built old-world ABI1 asset $Source. Build libSkiaSharp.so and libHarfBuzzSharp.so first."
+            throw "Native asset verification failed; missing old-world ABI1 native asset $Source. Build or download libSkiaSharp.so and libHarfBuzzSharp.so first."
         }
 
         $Destination = Join-Path $NativeOut $Asset.FileName
@@ -999,7 +1004,7 @@ function Install-ClassIslandNativeAssets {
             NativePackageId = $Asset.NativePackageId
             NativeVersion = $NativeVersion
             FileName = $Asset.FileName
-            SourceKind = "self-built old-world ABI1"
+            SourceKind = $NativeAssetSourceKind
             Source = $Source
             Destination = $Destination
             Size = (Get-Item -LiteralPath $Destination).Length

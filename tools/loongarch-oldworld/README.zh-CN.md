@@ -34,7 +34,7 @@ tools/loongarch-oldworld/native/linux-loongarch64/oldworld/
 - `YU322142/SkiaSharp-Loongarch-ABI1.0` 的 `main`
 - `YU322142/harfbuzz-Loongarch-ABI1.0` 的 `main`
 
-默认使用 `loong64/cross-tools` 的 `baseline` 工具链和其内置 sysroot。正常情况下不需要单独上传 sysroot。
+默认使用 `YU322142/loongarch-oldworld-sysroot` 发布的 Linux x64 旧世界 GCC 14 工具链和完整旧世界开发 sysroot。支持库 workflow 会直接把 `--sysroot` 指向该上传的 sysroot，正常在线构建不再依赖公开 cross-tools 自带 sysroot。
 
 ClassIsland workflow 会下载这两个仓库最新成功的线上 Actions artifact，并使用这些线上原生库进行打包。线上产物在 VM 中测试没问题后，再把通过验证的 `.so` 固化回 `tools/loongarch-oldworld/native/linux-loongarch64/oldworld/` 作为预编译默认版本。
 
