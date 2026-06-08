@@ -1,20 +1,73 @@
-name: Build LoongArch old-world ABI1.0 package
+name: Build misha LoongArch old-world ABI1.0 package
 
 on:
   workflow_dispatch:
     inputs:
-      branch:
-        description: ClassIsland branch to package
+      release_tag:
+        description: Source ref/tag to package, same role as the main Build workflow release_tag; use a misha branch/ref, not master
         required: true
         default: develop/v2/misha-alpha
+        type: string
+      primary_version:
+        description: App/package version written into metadata, for example 2.0.0.0
+        required: true
+        default: 2.0.0.0
+        type: string
+      is_test_mode:
+        description: Keep true for misha old-world test packages; mirrors the main Build workflow input
+        required: false
+        default: true
+        type: boolean
+      package_label:
+        description: Optional package label used in the tar name; blank uses the misha source ref slug
+        required: false
+        default: ""
+        type: string
+      artifact_name:
+        description: GitHub Actions artifact name for uploaded old-world packages
+        required: true
+        default: ClassIsland-misha-linux-loongarch64-oldworld
+        type: string
       avaloniaVersion:
         description: Avalonia version used by the dynamic patch
         required: true
         default: 12.0.4
+        type: string
       useOnlineNativeAssets:
         description: Download latest online native artifacts instead of bundled prebuilt native libraries
         required: true
-        default: "false"
+        default: false
+        type: boolean
+      nativeAssetsBranch:
+        description: Branch of the native-library forks to download artifacts from
+        required: true
+        default: main
+        type: string
+      skiaRepo:
+        description: SkiaSharp native-library repo, owner/name
+        required: true
+        default: YU322142/SkiaSharp-Loongarch-ABI1.0
+        type: string
+      skiaArtifactName:
+        description: SkiaSharp artifact name produced by the native-library workflow
+        required: true
+        default: libSkiaSharp-linux-loongarch64-oldworld
+        type: string
+      harfbuzzRepo:
+        description: HarfBuzzSharp native-library repo, owner/name
+        required: true
+        default: YU322142/harfbuzz-Loongarch-ABI1.0
+        type: string
+      harfbuzzArtifactName:
+        description: HarfBuzzSharp artifact name produced by the native-library workflow
+        required: true
+        default: libHarfBuzzSharp-linux-loongarch64-oldworld
+        type: string
+      nativeWorkflowFile:
+        description: Native-library workflow file name
+        required: true
+        default: build-loongarch-oldworld.yml
+        type: string
   push:
     branches:
       - develop/v2/misha-alpha
@@ -47,6 +100,12 @@ jobs:
         run: |
           tools/loongarch-oldworld/Get-OnlineNativeAssets.ps1 `
             -OutputDir "$env:GITHUB_WORKSPACE\artifacts\loongarch-oldworld\online-native" `
+            -SkiaRepo "${{ github.event.inputs.skiaRepo }}" `
+            -SkiaArtifactName "${{ github.event.inputs.skiaArtifactName }}" `
+            -HarfBuzzRepo "${{ github.event.inputs.harfbuzzRepo }}" `
+            -HarfBuzzArtifactName "${{ github.event.inputs.harfbuzzArtifactName }}" `
+            -WorkflowFileName "${{ github.event.inputs.nativeWorkflowFile }}" `
+            -Branch "${{ github.event.inputs.nativeAssetsBranch }}" `
             -Wait `
             -TimeoutMinutes 180
 
@@ -56,10 +115,15 @@ jobs:
           API_SIGNING_KEY: ${{ secrets.API_SIGNING_KEY }}
           API_SIGNING_KEY_PS: ${{ secrets.API_SIGNING_KEY_PS }}
           GITHUB_TOKEN: ${{ github.token }}
+          isTestMode: ${{ github.event.inputs.is_test_mode }}
         run: |
-          $branch = "${{ github.event.inputs.branch }}"
-          if ([string]::IsNullOrWhiteSpace($branch)) {
-            $branch = "${{ github.ref_name }}"
+          $sourceRef = "${{ github.event.inputs.release_tag }}"
+          if ([string]::IsNullOrWhiteSpace($sourceRef)) {
+            $sourceRef = "${{ github.ref_name }}"
+          }
+          $appVersion = "${{ github.event.inputs.primary_version }}"
+          if ([string]::IsNullOrWhiteSpace($appVersion)) {
+            $appVersion = "2.0.0.0"
           }
           $avaloniaVersion = "${{ github.event.inputs.avaloniaVersion }}"
           if ([string]::IsNullOrWhiteSpace($avaloniaVersion)) {
@@ -67,9 +131,11 @@ jobs:
           }
           $buildArgs = @{
             RepoUrl = "https://github.com/${{ github.repository }}.git"
-            Branches = $branch
+            Branches = $sourceRef
             SourceMode = "auto"
             AvaloniaVersion = $avaloniaVersion
+            AppVersion = $appVersion
+            PackageLabel = "${{ github.event.inputs.package_label }}"
           }
           if ("${{ github.event.inputs.useOnlineNativeAssets }}" -eq "true") {
             $buildArgs.NativeAssetsDir = "$env:GITHUB_WORKSPACE\artifacts\loongarch-oldworld\online-native"
@@ -79,7 +145,7 @@ jobs:
       - name: Upload package
         uses: actions/upload-artifact@v4
         with:
-          name: ClassIsland-linux-loongarch64-oldworld
+          name: ${{ github.event.inputs.artifact_name || 'ClassIsland-misha-linux-loongarch64-oldworld' }}
           path: |
             artifacts/loongarch-oldworld/out/*.tar.gz
           if-no-files-found: error

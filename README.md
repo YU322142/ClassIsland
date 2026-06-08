@@ -29,6 +29,12 @@ ClassIsland 是一款适用于班级多媒体屏幕的跨平台课表信息显�
 
 </div>
 
+> [!NOTE]
+> 龙芯旧世界 ABI1.0 / misha 测试分支打包说明单独放在这里：
+> [中文说明](tools/loongarch-oldworld/README.zh-CN.md) | [English README](tools/loongarch-oldworld/README.md).
+> 这套流程只用于 `develop/v2/misha-alpha` 和 `develop/v2/misha-alpha-ci`；`master` 主分支继续使用常规上游构建流程。
+> LoongArch old-world ABI1.0 / misha branch packaging is documented there; the `master` branch is not changed by this workflow.
+
 ## 功能
 
 > [!TIP]
