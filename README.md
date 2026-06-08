@@ -6,6 +6,19 @@
 
 本仓库是 [ClassIsland](https://github.com/ClassIsland/ClassIsland) 的分支版本，专为运行在 **LoongArch 架构（龙芯）的旧世界系统**（如银河麒麟 V10 教育版、Loongnix 等采用 16K 内存页的系统）上深度定制和编译。
 
+## 龙芯旧世界构建入口
+
+这里的“主分支”指本仓库的 `master` 分支，不是 `develop/v2/misha-alpha-ci`。本分支使用旧版 .NET 8 龙芯旧世界构建流程，misha 测试分支使用独立的 Loongnix .NET 10 构建流程。
+
+| 目标 | Actions workflow | 适用分支 | 运行库 | 原生库来源 |
+| --- | --- | --- | --- | --- |
+| 主分支旧世界包 | [Build ClassIsland for LoongArch](https://github.com/YU322142/ClassIsland/actions/workflows/build-loongarch.yml) | `master` | 旧版 .NET 8 | 使用本分支已有的预编译旧世界原生库/运行库 |
+| misha 旧世界测试包 | [Build ClassIsland misha LoongArch old-world ABI1.0 package](https://github.com/YU322142/ClassIsland/actions/workflows/build-loongarch-oldworld.yml) | `develop/v2/misha-alpha`、`develop/v2/misha-alpha-ci` | Loongnix .NET 10 | 默认使用 VM 验证过的预编译库，也可改用两个支持库的线上 Actions artifact |
+
+misha 测试包的说明在对应分支的 `tools/loongarch-oldworld/README.zh-CN.md` / `README.md` 中。本 `master` 分支 README 只说明旧版 .NET 8 主分支旧世界包的构建和运行方式；请不要把 misha workflow 用于 `master`。
+
+LoongArch old-world ABI1.0 has two build paths: this `master` branch uses the older .NET 8 workflow, while the misha branches use a separate Loongnix .NET 10 test packaging workflow. See `tools/loongarch-oldworld/README.zh-CN.md` / `README.md` on the misha branches for the .NET 10 build notes.
+
 ## 🎯 解决了什么问题？
 
 原版 ClassIsland 及相关插件在龙芯旧世界电脑上（尤其是通过 LATX 等转译器）运行时会遇到以下致命问题，本分支已将其全部修复：
