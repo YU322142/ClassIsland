@@ -29,11 +29,16 @@ ClassIsland 是一款适用于班级多媒体屏幕的跨平台课表信息显�
 
 </div>
 
-> [!NOTE]
-> 龙芯旧世界 ABI1.0 有两个编译入口，请按目标选择：
-> `master` 主分支旧世界包走 `.github/workflows/build-loongarch.yml`（Actions 名称 `Build ClassIsland for LoongArch`），这是旧版 .NET 8 流程，使用已有预编译原生库/运行库。
-> `develop/v2/misha-alpha` 和 `develop/v2/misha-alpha-ci` 的旧世界测试包走 [tools/loongarch-oldworld/README.zh-CN.md](tools/loongarch-oldworld/README.zh-CN.md) / [English README](tools/loongarch-oldworld/README.md)，这是 .NET 10 + misha 测试流程，可使用已验证预编译库，也可改用线上支持库 artifact。
-> LoongArch old-world ABI1.0 has two build paths: fork `master` uses `Build ClassIsland for LoongArch` for the older .NET 8 package, while the misha branches use the separate .NET 10 old-world packaging workflow documented above.
+## 龙芯旧世界编译入口
+
+| 目标 | Actions workflow | 适用分支 | 运行库 | 原生库来源 |
+| --- | --- | --- | --- | --- |
+| 主分支旧世界包 | [Build ClassIsland for LoongArch](https://github.com/YU322142/ClassIsland/actions/workflows/build-loongarch.yml) | `master` | 旧版 .NET 8 | 使用该流程已有的预编译旧世界原生库/运行库 |
+| misha 旧世界测试包 | [Build ClassIsland misha LoongArch old-world ABI1.0 package](https://github.com/YU322142/ClassIsland/actions/workflows/build-loongarch-oldworld.yml) | `develop/v2/misha-alpha`、`develop/v2/misha-alpha-ci` | Loongnix .NET 10 | 默认使用 VM 验证过的预编译库，也可改用两个支持库的线上 Actions artifact |
+
+misha 测试包的详细说明见 [中文文档](tools/loongarch-oldworld/README.zh-CN.md) / [English README](tools/loongarch-oldworld/README.md)。两个入口都是龙芯旧世界 ABI1.0，但服务的分支、.NET 版本和原生库来源不同，请不要把 misha workflow 用于 `master`。
+
+LoongArch old-world ABI1.0 has two build paths: the fork `master` package uses the older .NET 8 `Build ClassIsland for LoongArch` workflow, while the misha branches use the separate Loongnix .NET 10 old-world packaging workflow documented above.
 
 ## 功能
 
