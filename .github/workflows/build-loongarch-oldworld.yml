@@ -1,30 +1,25 @@
-name: Build misha LoongArch old-world ABI1.0 package
+name: Build ClassIsland misha LoongArch old-world ABI1.0 package
 
 on:
   workflow_dispatch:
     inputs:
-      release_tag:
-        description: Source ref/tag to package, same role as the main Build workflow release_tag; use a misha branch/ref, not master
+      version_tag:
+        description: 手动指定版本号（例如 2.0.4.0000）。留空则基于远端最新 tag 自动计算
+        required: false
+        default: ''
+        type: string
+      branch:
+        description: 要打包的 misha 测试分支；不要填写 master
         required: true
         default: develop/v2/misha-alpha
         type: string
-      primary_version:
-        description: App/package version written into metadata, for example 2.0.0.0
-        required: true
-        default: 2.0.0.0
-        type: string
-      is_test_mode:
-        description: Keep true for misha old-world test packages; mirrors the main Build workflow input
-        required: false
-        default: true
-        type: boolean
       package_label:
-        description: Optional package label used in the tar name; blank uses the misha source ref slug
+        description: 可选 tar 包名标签；留空则使用 misha 分支名
         required: false
         default: ""
         type: string
       artifact_name:
-        description: GitHub Actions artifact name for uploaded old-world packages
+        description: 上传到 GitHub Actions 的 artifact 名称
         required: true
         default: ClassIsland-misha-linux-loongarch64-oldworld
         type: string
@@ -86,6 +81,53 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: false
+          fetch-depth: 0
+
+      - name: Prepare version tag
+        shell: pwsh
+        run: |
+          git fetch --tags origin
+
+          $inputTag = "${{ github.event.inputs.version_tag }}"
+          if (-not [string]::IsNullOrWhiteSpace($inputTag)) {
+            $versionTag = $inputTag
+          } else {
+            $latestTag = git tag -l |
+              Where-Object { $_ -match '^\d+\.\d+\.\d+\.\d+$' } |
+              Sort-Object {
+                $p = $_.Split(".")
+                "{0:D10}.{1:D10}.{2:D10}.{3:D10}" -f [int]$p[0], [int]$p[1], [int]$p[2], [int]$p[3]
+              } |
+              Select-Object -Last 1
+
+            if ([string]::IsNullOrWhiteSpace($latestTag)) {
+              $versionTag = "2.0.3.0001"
+            } else {
+              Write-Host "Latest remote tag: $latestTag"
+              $parts = $latestTag.Split(".")
+              $v1 = if ($parts[0]) { $parts[0] } else { "2" }
+              $v2 = if ($parts[1]) { $parts[1] } else { "0" }
+              $v3 = if ($parts[2]) { $parts[2] } else { "3" }
+              $v4 = if ($parts[3]) { $parts[3] -replace '[^0-9]', '' } else { "0" }
+              if ([string]::IsNullOrWhiteSpace($v4)) {
+                $v4 = "0"
+              }
+
+              if ($v4 -eq "0") {
+                $nextV4 = "0001"
+              } elseif ($v4.Length -lt 4) {
+                $last2 = $v4.Substring([Math]::Max(0, $v4.Length - 2))
+                $nextV4 = "20{0:D2}" -f [int]$last2
+              } else {
+                $nextV4 = "{0:D4}" -f ([int]$v4 + 1)
+              }
+
+              $versionTag = "$v1.$v2.$v3.$nextV4"
+            }
+          }
+
+          "VERSION_TAG=$versionTag" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "Current build version: $versionTag"
 
       - name: Setup .NET 10 SDK
         uses: actions/setup-dotnet@v4
@@ -115,13 +157,12 @@ jobs:
           API_SIGNING_KEY: ${{ secrets.API_SIGNING_KEY }}
           API_SIGNING_KEY_PS: ${{ secrets.API_SIGNING_KEY_PS }}
           GITHUB_TOKEN: ${{ github.token }}
-          isTestMode: ${{ github.event.inputs.is_test_mode }}
         run: |
-          $sourceRef = "${{ github.event.inputs.release_tag }}"
+          $sourceRef = "${{ github.event.inputs.branch }}"
           if ([string]::IsNullOrWhiteSpace($sourceRef)) {
             $sourceRef = "${{ github.ref_name }}"
           }
-          $appVersion = "${{ github.event.inputs.primary_version }}"
+          $appVersion = "$env:VERSION_TAG"
           if ([string]::IsNullOrWhiteSpace($appVersion)) {
             $appVersion = "2.0.0.0"
           }
