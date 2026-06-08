@@ -30,10 +30,10 @@ ClassIsland 是一款适用于班级多媒体屏幕的跨平台课表信息显�
 </div>
 
 > [!NOTE]
-> 龙芯旧世界 ABI1.0 / misha 测试分支打包说明单独放在这里：
-> [中文说明](tools/loongarch-oldworld/README.zh-CN.md) | [English README](tools/loongarch-oldworld/README.md).
-> 这套流程只用于 `develop/v2/misha-alpha` 和 `develop/v2/misha-alpha-ci`；`master` 主分支继续使用常规上游构建流程。
-> LoongArch old-world ABI1.0 / misha branch packaging is documented there; the `master` branch is not changed by this workflow.
+> 龙芯旧世界 ABI1.0 有两个编译入口，请按目标选择：
+> `master` 主分支旧世界包走 `.github/workflows/build-loongarch.yml`（Actions 名称 `Build ClassIsland for LoongArch`），这是旧版 .NET 8 流程，使用已有预编译原生库/运行库。
+> `develop/v2/misha-alpha` 和 `develop/v2/misha-alpha-ci` 的旧世界测试包走 [tools/loongarch-oldworld/README.zh-CN.md](tools/loongarch-oldworld/README.zh-CN.md) / [English README](tools/loongarch-oldworld/README.md)，这是 .NET 10 + misha 测试流程，可使用已验证预编译库，也可改用线上支持库 artifact。
+> LoongArch old-world ABI1.0 has two build paths: fork `master` uses `Build ClassIsland for LoongArch` for the older .NET 8 package, while the misha branches use the separate .NET 10 old-world packaging workflow documented above.
 
 ## 功能
 

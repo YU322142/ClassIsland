@@ -6,11 +6,13 @@
 - `develop/v2/misha-alpha-ci`
 
 适配逻辑集中放在 `tools/loongarch-oldworld` 下，避免直接修改上游主源码，便于后续继续跟进上游。
-ClassIsland 的 `master` 分支不参与本次适配。
+本 fork 有两条龙芯旧世界编译路径：`master` 主分支的旧版 .NET 8 workflow，以及这里的 .NET 10 misha 测试打包 workflow。
 
-## 与 `master` 主分支构建方式的区别
+## 应该使用哪一个龙芯旧世界编译入口
 
-ClassIsland `master` 分支继续使用项目原本的构建、发布和 CI 流程，不使用本目录中的 LoongArch 旧世界动态修补脚本，也不会被本 workflow 自动打包。
+如果要编译 fork `master` 主分支的旧世界包，请使用 `.github/workflows/build-loongarch.yml`（`Build ClassIsland for LoongArch`）。这条路径是旧版 .NET 8 workflow，使用已经为该分支准备好的预编译 LoongArch 原生库/运行库。
+
+如果要测试 misha 分支在龙芯旧世界 ABI1.0 上的运行情况，请使用 `.github/workflows/build-loongarch-oldworld.yml`（`Build ClassIsland misha LoongArch old-world ABI1.0 package`）。这条路径使用 Loongnix .NET 10，并配合这里记录的新原生库适配方案。
 
 本目录和 `.github/workflows/build-loongarch-oldworld.yml` 只服务于 `develop/v2/misha-alpha` 与 `develop/v2/misha-alpha-ci` 两个 misha 测试分支。它们的 LoongArch 旧世界包需要额外完成以下工作：
 
@@ -19,7 +21,14 @@ ClassIsland `master` 分支继续使用项目原本的构建、发布和 CI 流�
 - 注入已经过 Loongnix 20 旧世界 ABI1.0 VM 验证的 `libSkiaSharp.so` 和 `libHarfBuzzSharp.so`。
 - 记录 native/runtime manifest，便于后续确认原生库来源、GLIBC 上限和运行库版本。
 
-这些差异是为了验证 misha 测试分支在龙芯旧世界 ABI1.0 上的可运行性，不代表 `master` 主分支的常规发布方式发生变化。
+这些差异是为了验证 misha 测试分支在龙芯旧世界 ABI1.0 上的可运行性，不会替换 fork `master` 主分支已有的 .NET 8 旧世界编译方式。
+
+两个龙芯编译入口请区分使用：
+
+| Workflow | 分支范围 | 用途 | 手动版本输入 |
+| --- | --- | --- | --- |
+| `.github/workflows/build-loongarch.yml`（`Build ClassIsland for LoongArch`） | fork `master` / 旧版旧世界路径 | .NET 8 旧世界包，使用已有预编译原生库/运行库 | `version_tag` |
+| `.github/workflows/build-loongarch-oldworld.yml`（`Build ClassIsland misha LoongArch old-world ABI1.0 package`） | `develop/v2/misha-alpha`、`develop/v2/misha-alpha-ci` | .NET 10 misha 旧世界运行测试包，使用 VM 验证预编译库或线上重编支持库 | `version_tag` 加 misha `branch` |
 
 ## 动态修补内容
 
@@ -49,6 +58,13 @@ tools/loongarch-oldworld/native/linux-loongarch64/oldworld/
 
 默认使用 `YU322142/loongarch-oldworld-sysroot` 发布的 Linux x64 旧世界 GCC 14 工具链和完整旧世界开发 sysroot。支持库 workflow 会直接把 `--sysroot` 指向该上传的 sysroot，正常在线构建不再依赖公开 cross-tools 自带 sysroot。
 
+工具链/sysroot 来源说明：
+
+- 工具链不是本项目自研的编译器。它是为了让 GitHub Actions 可复现构建而固定并重新发布的第三方 LoongArch 旧世界交叉工具链聚合包；压缩包内包含 `share/loongarch64-unknown-linux-gnu-ct-ng.config.bz2`，以及 GCC、binutils、glibc、crosstool-NG 等组件的许可证文件。
+- sysroot 不是可启动的虚拟机或根文件系统，而是从旧世界 Loongnix/LoongArch 开发环境整理出的开发 sysroot，包含保留桌面功能所需的 fontconfig、FreeType、X11、OpenGL、Vulkan 等头文件和库。
+- `YU322142/loongarch-oldworld-sysroot` 只负责固定支持库 workflow 使用的 Release 资产、下载地址和 SHA256，不会也不能重新授权压缩包内的第三方文件。
+- 原生库源码仍来自 `mono/SkiaSharp` `v3.119.4`；`libHarfBuzzSharp.so` 是从该源码树中的 HarfBuzzSharp native GN target 构建出来的，不是普通上游 `libharfbuzz.so`。
+
 ClassIsland workflow 默认使用仓库内已经过 VM 验证的预编译 `.so`。如需重新验证线上 Actions 产物，可在手动运行 workflow 时将 `useOnlineNativeAssets` 设为 `true`，workflow 会下载这两个仓库最新成功的线上 Actions artifact 并用它们打包。线上产物在 VM 中测试没问题后，再把通过验证的 `.so` 固化回 `tools/loongarch-oldworld/native/linux-loongarch64/oldworld/` 作为新的预编译默认版本。
 
 当前预编译默认版本来自以下已验证的线上构建：
@@ -63,12 +79,11 @@ libHarfBuzzSharp.so SHA256: D94A261287A0A21E84C2F01FA2D1F5B5F461A9704103061C4ABD
 
 ## 手动 workflow 输入
 
-`.github/workflows/build-loongarch-oldworld.yml` 的手动输入尽量与主分支 `Build` workflow 的发布入口保持一致：
+`.github/workflows/build-loongarch-oldworld.yml` 的手动输入尽量与 fork `master` 主分支 `.github/workflows/build-loongarch.yml` 保持一致：
 
-- `release_tag`：要打包的源码 ref/tag。这里应填写 misha 测试分支或其它 misha ref，不要填写 `master`。
-- `primary_version`：写入程序集和 manifest 的应用/包版本。
-- `is_test_mode`：保留为与主 workflow 对齐的测试发布开关。misha 旧世界测试包建议保持启用。
-- `package_label`：可选的 tar 包名标签；留空时使用 misha ref 的 slug，例如 `misha-alpha-ci`。
+- `version_tag`：含义与 fork `master` 的 LoongArch workflow 一致。可填写 `2.0.4.0000` 这类版本号；留空时会基于远端最新数字 tag 自动计算。
+- `branch`：要打包的 misha 测试分支。这里应填写 `develop/v2/misha-alpha`、`develop/v2/misha-alpha-ci` 或其它 misha 测试 ref，不要填写 `master`。
+- `package_label`：可选的 tar 包名标签；留空时使用 misha 分支名 slug，例如 `misha-alpha-ci`。
 - `artifact_name`：上传到 GitHub Actions 的打包 artifact 名称。
 - `useOnlineNativeAssets` 以及两个支持库的 repo/artifact 输入：用于从你指定的支持库 fork 下载线上 Actions artifact，而不是使用仓库内置的预编译 `.so`。
 
