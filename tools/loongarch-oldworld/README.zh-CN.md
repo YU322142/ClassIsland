@@ -115,6 +115,18 @@ artifacts/loongarch-oldworld/out/
 
 这个目录需要和 `ClassIsland/dotnet`、`ClassIsland/host` 以及应用文件一起保留。删除后，旧世界虚拟机里除非另行安装并手动选中了兼容运行库，否则软件无法启动。
 
+## 可选本地原生库重编
+
+Windows 本地交叉编译辅助脚本：
+
+```powershell
+pwsh tools/loongarch-oldworld/Build-NativeLibs.ps1 `
+  -SkiaSharpRoot C:\path\to\SkiaSharp-3.119.4 `
+  -ToolchainRoot C:\path\to\loongarch64-unknown-linux-gnu
+```
+
+如果省略这些参数，脚本会在 `artifacts/loongarch-oldworld/src` 和 `artifacts/loongarch-oldworld/toolchains` 下查找。线上原生库构建仍建议优先使用两个支持库 fork 中的 workflow。
+
 ## 已验证项目
 
 已在可视化 QEMU LoongArch 旧世界 ABI1.0 Loongnix 20 X11 虚拟机中验证：
