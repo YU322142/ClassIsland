@@ -8,6 +8,9 @@ param(
     [string]$ApiSigningKey = $env:API_SIGNING_KEY,
     [string]$ApiSigningKeyPassPhrase = $env:API_SIGNING_KEY_PS,
     [string]$AvaloniaVersion = "12.0.4",
+    [string]$AppVersion = "2.0.0.0",
+    [string]$AssemblyVersion,
+    [string]$PackageLabel,
     [string]$SkiaSharpNativeAssetsVersionOverride,
     [string]$HarfBuzzSharpNativeAssetsVersionOverride,
     [string]$NativeAssetsDir,
@@ -47,6 +50,29 @@ if ([string]::IsNullOrWhiteSpace($ApiSigningKey) -or [string]::IsNullOrWhiteSpac
         throw "API_SIGNING_KEY and API_SIGNING_KEY_PS are required when -RequireGptSovitsSigningKey is used."
     }
     Write-Warning "API_SIGNING_KEY/API_SIGNING_KEY_PS are not set. The package will disable signed internal GPT-SoVITS presets only."
+}
+
+function Get-NumericAssemblyVersion {
+    param(
+        [Parameter(Mandatory)]
+        [string]$Version
+    )
+
+    if ($Version -match '^(?<major>\d+)(?:\.(?<minor>\d+))?(?:\.(?<build>\d+))?(?:\.(?<revision>\d+))?$') {
+        $Parts = @(
+            $Matches.major,
+            $(if ($Matches.minor) { $Matches.minor } else { "0" }),
+            $(if ($Matches.build) { $Matches.build } else { "0" }),
+            $(if ($Matches.revision) { $Matches.revision } else { "0" })
+        )
+        return ($Parts -join ".")
+    }
+
+    return "2.0.0.0"
+}
+
+if ([string]::IsNullOrWhiteSpace($AssemblyVersion)) {
+    $AssemblyVersion = Get-NumericAssemblyVersion -Version $AppVersion
 }
 
 function Invoke-Native {
@@ -342,7 +368,10 @@ function Patch-ClassIslandAssemblyInfo {
         [string]$RepoDir,
 
         [Parameter(Mandatory)]
-        [string]$InfoVersion
+        [string]$InfoVersion,
+
+        [Parameter(Mandatory)]
+        [string]$AssemblyVersion
     )
 
     $AssemblyInfoPath = Join-Path $RepoDir "AssemblyInfo.cs"
@@ -354,8 +383,8 @@ function Patch-ClassIslandAssemblyInfo {
     $Pattern = '(?s)#if NIX\s*(?:\[assembly: AssemblyVersion\("[^"]*"\)\]\s*)?(?:\[assembly: AssemblyFileVersion\("[^"]*"\)\]\s*)?\[assembly: AssemblyInformationalVersion\("[^"]*"\)\]\s*#else'
     $Replacement = @"
 #if NIX
-[assembly: AssemblyVersion("2.0.0.0")]
-[assembly: AssemblyFileVersion("2.0.0.0")]
+[assembly: AssemblyVersion("$AssemblyVersion")]
+[assembly: AssemblyFileVersion("$AssemblyVersion")]
 [assembly: AssemblyInformationalVersion("$InfoVersion")]
 #else
 "@
@@ -1030,6 +1059,8 @@ function Install-ClassIslandNativeAssets {
         "Branch: $Branch",
         "Commit: $Commit",
         "TargetRid: $TargetRid",
+        "AppVersion requested: $AppVersion",
+        "AssemblyVersion used: $AssemblyVersion",
         "AvaloniaVersion requested: $AvaloniaVersion",
         "SkiaSharpNativeAssetsVersionOverride: $SkiaSharpNativeAssetsVersionOverride",
         "HarfBuzzSharpNativeAssetsVersionOverride: $HarfBuzzSharpNativeAssetsVersionOverride",
@@ -1117,6 +1148,8 @@ function Assert-ClassIslandRuntime {
 ClassIsland LoongArch runtime manifest
 Branch: $Branch
 Commit: $Commit
+AppVersion requested: $AppVersion
+AssemblyVersion used: $AssemblyVersion
 TargetFramework: $($RuntimeConfig.runtimeOptions.tfm)
 Framework: $($RuntimeConfig.runtimeOptions.framework.name) $($RuntimeConfig.runtimeOptions.framework.version)
 BundledRuntimeVersion: $ExpectedBundledDotNetRuntimeVersion
@@ -1182,11 +1215,17 @@ function Write-ClassIslandGeneratedFiles {
 
         [string]$ApiSigningKey,
 
-        [string]$ApiSigningKeyPassPhrase
+        [string]$ApiSigningKeyPassPhrase,
+
+        [Parameter(Mandatory)]
+        [string]$AppVersion,
+
+        [Parameter(Mandatory)]
+        [string]$AssemblyVersion
     )
 
-    $InfoVersion = "2.0.0.0-loongarch-$($BranchName -replace '[^A-Za-z0-9]+','-')-$($Commit.Substring(0, 7))"
-    Patch-ClassIslandAssemblyInfo -RepoDir $RepoDir -InfoVersion $InfoVersion
+    $InfoVersion = "$AppVersion-loongarch-$($BranchName -replace '[^A-Za-z0-9]+','-')-$($Commit.Substring(0, 7))"
+    Patch-ClassIslandAssemblyInfo -RepoDir $RepoDir -InfoVersion $InfoVersion -AssemblyVersion $AssemblyVersion
 
     $HasGptSovitsSigningKey = -not [string]::IsNullOrWhiteSpace($ApiSigningKey) -and -not [string]::IsNullOrWhiteSpace($ApiSigningKeyPassPhrase)
     $EscapedApiSigningKey = ($(if ($HasGptSovitsSigningKey) { $ApiSigningKey } else { "" })).Replace('"', '""')
@@ -1215,13 +1254,42 @@ function Get-BranchSlug {
     return ($Branch -replace '^develop/v2/', '' -replace '[^A-Za-z0-9._-]+', '-')
 }
 
+function Get-PackageSlug {
+    param(
+        [Parameter(Mandatory)]
+        [string]$Branch,
+
+        [string]$Label,
+
+        [int]$BranchCount
+    )
+
+    $BranchSlug = Get-BranchSlug -Branch $Branch
+    if ([string]::IsNullOrWhiteSpace($Label)) {
+        return $BranchSlug
+    }
+
+    $LabelSlug = $Label -replace '[^A-Za-z0-9._-]+', '-'
+    $LabelSlug = $LabelSlug.Trim([char[]]"-")
+    if ([string]::IsNullOrWhiteSpace($LabelSlug)) {
+        return $BranchSlug
+    }
+
+    if ($BranchCount -gt 1) {
+        return "$LabelSlug-$BranchSlug"
+    }
+
+    return $LabelSlug
+}
+
 Ensure-Download -Uri "$LoongnixDotNetRelease/$DotnetRuntimeArchive" -Path (Join-Path $RuntimeDir $DotnetRuntimeArchive)
 Ensure-Download -Uri "$LoongnixDotNetRelease/$AspnetRuntimeArchive" -Path (Join-Path $RuntimeDir $AspnetRuntimeArchive)
 
 $Results = @()
 
 foreach ($Branch in $Branches) {
-    $Slug = Get-BranchSlug -Branch $Branch
+    $Slug = Get-PackageSlug -Branch $Branch -Label $PackageLabel -BranchCount $Branches.Count
+    $BranchSlug = Get-BranchSlug -Branch $Branch
     $RepoDir = Join-Path $BuildRoot "$Slug-src"
     $PublishDir = Join-Path $BuildRoot "$Slug-publish"
     $PackageName = "ClassIsland-$Slug-linux-loongarch64-net10"
@@ -1243,7 +1311,7 @@ foreach ($Branch in $Branches) {
     Patch-ClassIslandAvaloniaVersion -RepoDir $RepoDir -Version $AvaloniaVersion
     Patch-ClassIslandNativeAssetOverrides -RepoDir $RepoDir
     Patch-EdgeTtsSharp -RepoDir $RepoDir
-    Write-ClassIslandGeneratedFiles -RepoDir $RepoDir -BranchName $Slug -Commit $Commit -ApiSigningKey $ApiSigningKey -ApiSigningKeyPassPhrase $ApiSigningKeyPassPhrase
+    Write-ClassIslandGeneratedFiles -RepoDir $RepoDir -BranchName $BranchSlug -Commit $Commit -ApiSigningKey $ApiSigningKey -ApiSigningKeyPassPhrase $ApiSigningKeyPassPhrase -AppVersion $AppVersion -AssemblyVersion $AssemblyVersion
 
     Remove-Item -LiteralPath $PublishDir, $PackageWork -Recurse -Force -ErrorAction SilentlyContinue
 
@@ -1265,10 +1333,10 @@ foreach ($Branch in $Branches) {
             "-p:DebugType=none" `
             "-p:DebugSymbols=false" `
             "-p:ClassIsland_PlatformTarget=loongarch64" `
-            "-p:Version=2.0.0.0" `
-            "-p:AssemblyVersion=2.0.0.0" `
-            "-p:FileVersion=2.0.0.0" `
-            "-p:InformationalVersion=2.0.0.0-loongarch-$Slug-$($Commit.Substring(0, 7))"
+            "-p:Version=$AppVersion" `
+            "-p:AssemblyVersion=$AssemblyVersion" `
+            "-p:FileVersion=$AssemblyVersion" `
+            "-p:InformationalVersion=$AppVersion-loongarch-$BranchSlug-$($Commit.Substring(0, 7))"
     } finally {
         Remove-Item -LiteralPath (Join-Path $RepoDir "ClassIsland\secrets.g.cs") -Force -ErrorAction SilentlyContinue
         Pop-Location
