@@ -68,6 +68,8 @@ Toolchain/sysroot source notes:
 
 The ClassIsland workflow uses the bundled, VM-verified prebuilt `.so` files by default. To re-test online Actions artifacts, manually run the workflow with `useOnlineNativeAssets` set to `true`; the workflow then downloads the latest successful online artifacts from the two support-library repositories and uses them for packaging. After those online artifacts pass VM testing, copy the verified `.so` files back into `tools/loongarch-oldworld/native/linux-loongarch64/oldworld/` as the new prebuilt default.
 
+## Manual workflow input
+
 The manual workflow input is intentionally close to the fork `master` branch `.github/workflows/build-loongarch.yml`:
 
 - `version_tag`: same meaning as the fork `master` LoongArch workflow. Enter a version such as `2.0.4.0000`, or leave it blank to compute the next numeric version from remote tags.
