@@ -39,10 +39,40 @@ Two LoongArch workflows are intentionally kept separate:
 - Upgrades Avalonia to the requested version, defaulting to `12.0.4`.
 - Keeps GPT-SoVITS internal preset signing optional so missing private keys do not block normal builds.
 - Applies Linux/X11 stability patches needed by the old-world VM.
+- Forces Avalonia software rendering by default on LoongArch64 Linux/X11 and keeps the CPU framebuffer retained to avoid red/white blocks on real hardware GLX/EGL paths.
+- Disables Avalonia IME probing in the default test environment so a missing `org.fcitx.Fcitx` DBus service does not repeatedly log errors and slow down interaction.
 - Falls back to `ffplay`, `paplay`, or `aplay` for Linux audio when MiniAudio cannot open the default device.
 - Injects the self-built `libSkiaSharp.so` and `libHarfBuzzSharp.so` into `runtimes/linux-loongarch64/native`.
 
 These patches are not committed to the upstream source files. They are applied only in the temporary build tree.
+
+## X11 Rendering On Real Hardware
+
+The old-world QEMU VM usually has no usable hardware GL path, and the recommended launcher disables QEMU OpenGL. Avalonia therefore tends to fall back to software rendering in the VM. Some Kylin/Loongnix real machines expose GLX/EGL instead; with the old-world ABI1.0, Mesa/GPU driver, and SkiaSharp native-library combination, that GL path can render transparent layers or backgrounds as large red/white blocks and make interaction very sluggish.
+
+This packaging path therefore defaults LoongArch64 Linux/X11 to:
+
+```bash
+CLASSISLAND_X11_RENDERING=software
+CLASSISLAND_X11_RETAINED_FRAMEBUFFER=1
+CLASSISLAND_X11_ENABLE_IME=0
+```
+
+These defaults are applied both in the application entry point and in `run.sh`. For normal tests, run:
+
+```bash
+bash run.sh --foreground
+```
+
+To diagnose GPU drivers or Avalonia backends, temporarily override the renderer:
+
+```bash
+CLASSISLAND_X11_RENDERING=glx bash run.sh --foreground
+CLASSISLAND_X11_RENDERING=egl bash run.sh --foreground
+CLASSISLAND_X11_RENDERING=auto bash run.sh --foreground
+```
+
+If red/white blocks, incorrectly filled window backgrounds, or severe settings-window sluggishness appear, return to the default `software` mode. If the desktop really has a working Fcitx service, use `CLASSISLAND_X11_ENABLE_IME=1 bash run.sh --foreground` to temporarily enable Avalonia IME; do not enable it on sessions without the Fcitx DBus service.
 
 ## Native libraries
 
