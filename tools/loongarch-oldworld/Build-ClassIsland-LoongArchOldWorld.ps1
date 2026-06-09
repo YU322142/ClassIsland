@@ -736,6 +736,109 @@ function Patch-ClassIslandLinuxX11Stability {
         [string]$RepoDir
     )
 
+    $ProgramPath = Join-Path $RepoDir "ClassIsland.Desktop\Program.cs"
+    $ProgramText = (Read-Utf8Text -Path $ProgramPath) -replace "`r`n", "`n"
+
+    if ($ProgramText -notmatch "ConfigureLinuxX11Environment") {
+        $ProgramText = Replace-RequiredLiteral -Text $ProgramText `
+            -Search "#endif`n        var stopTokenSource = new CancellationTokenSource();`n" `
+            -Replacement "#endif`n#if Platforms_Linux`n        ConfigureLinuxX11Environment();`n#endif`n        var stopTokenSource = new CancellationTokenSource();`n" `
+            -Description "Linux X11 process environment setup"
+
+        $ProgramText = Replace-RequiredLiteral -Text $ProgramText `
+            -Search "            })`n#if DEBUG`n" `
+            -Replacement "            })`n#if Platforms_Linux`n            .With(BuildX11PlatformOptions())`n#endif`n#if DEBUG`n" `
+            -Description "Linux X11 platform options"
+
+        $Search = @'
+#endif
+    }
+
+    private static IReadOnlyList<Win32RenderingMode> BuildRenderingMode(int userValue)
+'@
+        $Replacement = @'
+#endif
+    }
+
+#if Platforms_Linux
+    private static void ConfigureLinuxX11Environment()
+    {
+        if (!ShouldEnableLinuxIme())
+        {
+            Environment.SetEnvironmentVariable("XMODIFIERS", "@im=none");
+            Environment.SetEnvironmentVariable("GTK_IM_MODULE", "xim");
+            Environment.SetEnvironmentVariable("QT_IM_MODULE", "xim");
+        }
+    }
+
+    private static X11PlatformOptions BuildX11PlatformOptions()
+    {
+        return new X11PlatformOptions
+        {
+            RenderingMode = BuildX11RenderingMode(),
+            EnableIme = ShouldEnableLinuxIme(),
+            UseRetainedFramebuffer = ShouldUseRetainedFramebuffer()
+        };
+    }
+
+    private static IReadOnlyList<X11RenderingMode> BuildX11RenderingMode()
+    {
+        var requested = Environment.GetEnvironmentVariable("CLASSISLAND_X11_RENDERING")
+                        ?? Environment.GetEnvironmentVariable("CLASSISLAND_X11_RENDERING_MODE");
+
+        return NormalizeSwitch(requested) switch
+        {
+            "auto" => [X11RenderingMode.Glx, X11RenderingMode.Software],
+            "glx" => [X11RenderingMode.Glx, X11RenderingMode.Software],
+            "egl" => [X11RenderingMode.Egl, X11RenderingMode.Software],
+            "vulkan" => [X11RenderingMode.Vulkan, X11RenderingMode.Software],
+            "software" => [X11RenderingMode.Software],
+            _ when IsLoongArch64() => [X11RenderingMode.Software],
+            _ => [X11RenderingMode.Glx, X11RenderingMode.Software]
+        };
+    }
+
+    private static bool ShouldUseRetainedFramebuffer()
+    {
+        var requested = Environment.GetEnvironmentVariable("CLASSISLAND_X11_RETAINED_FRAMEBUFFER");
+        return ParseBooleanSwitch(requested) ?? IsLoongArch64();
+    }
+
+    private static bool ShouldEnableLinuxIme()
+    {
+        var requested = Environment.GetEnvironmentVariable("CLASSISLAND_X11_ENABLE_IME");
+        return ParseBooleanSwitch(requested) ?? !IsLoongArch64();
+    }
+
+    private static bool IsLoongArch64()
+    {
+        return string.Equals(RuntimeInformation.OSArchitecture.ToString(), "LoongArch64", StringComparison.OrdinalIgnoreCase)
+               || string.Equals(RuntimeInformation.ProcessArchitecture.ToString(), "LoongArch64", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool? ParseBooleanSwitch(string? value)
+    {
+        return NormalizeSwitch(value) switch
+        {
+            "1" or "true" or "yes" or "on" or "enable" or "enabled" => true,
+            "0" or "false" or "no" or "off" or "disable" or "disabled" => false,
+            _ => null
+        };
+    }
+
+    private static string NormalizeSwitch(string? value)
+    {
+        return value?.Trim().ToLowerInvariant() ?? "";
+    }
+
+#endif
+
+    private static IReadOnlyList<Win32RenderingMode> BuildRenderingMode(int userValue)
+'@
+        $ProgramText = Replace-RequiredLiteral -Text $ProgramText -Search $Search -Replacement $Replacement -Description "Linux X11 software rendering helpers"
+        Set-TextIfChanged -Path $ProgramPath -Content $ProgramText
+    }
+
     $WindowPlatformServicePath = Join-Path $RepoDir "platforms\ClassIsland.Platforms.Linux\Services\WindowPlatformService.cs"
     $Text = (Read-Utf8Text -Path $WindowPlatformServicePath) -replace "`r`n", "`n"
 
@@ -1371,6 +1474,15 @@ export DISPLAY="${DISPLAY:-:0}"
 export XAUTHORITY="${XAUTHORITY:-$HOME/.Xauthority}"
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 export XDG_DATA_DIRS="${XDG_DATA_DIRS:-/usr/share:/usr/local/share}"
+export CLASSISLAND_X11_RENDERING="${CLASSISLAND_X11_RENDERING:-software}"
+export CLASSISLAND_X11_RETAINED_FRAMEBUFFER="${CLASSISLAND_X11_RETAINED_FRAMEBUFFER:-1}"
+export CLASSISLAND_X11_ENABLE_IME="${CLASSISLAND_X11_ENABLE_IME:-0}"
+
+if [ "$CLASSISLAND_X11_ENABLE_IME" = "0" ] || [ "$CLASSISLAND_X11_ENABLE_IME" = "false" ]; then
+  export XMODIFIERS="@im=none"
+  export GTK_IM_MODULE="xim"
+  export QT_IM_MODULE="xim"
+fi
 
 if [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]; then
   for env_file in "$XDG_RUNTIME_DIR/dbus-session-env" "/run/user/$(id -u)/dbus-session-env"; do
