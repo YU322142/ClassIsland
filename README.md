@@ -14,7 +14,7 @@
 | misha CI 旧世界测试包 | `develop/v2/misha-alpha-ci` | [Build ClassIsland misha LoongArch old-world ABI1.0 package](https://github.com/YU322142/ClassIsland/actions/workflows/build-loongarch-oldworld.yml) | Loongnix .NET 10 | 独立的 SkiaSharp/HarfBuzzSharp old-world 支持库构建 |
 | misha 非 CI 测试包 | `develop/v2/misha-alpha` | 同上 | Loongnix .NET 10 | 同上 |
 
-`master` 是旧版 .NET 8 旧世界构建；misha 分支是 .NET 10 测试构建。两套流程不要互相套用。misha 分支的完整说明在对应分支的 `tools/loongarch-oldworld/README.zh-CN.md` 和 `tools/loongarch-oldworld/README.md`。
+`master` 是旧版 .NET 8 旧世界构建；misha 分支是 .NET 10 测试构建。两套流程不要互相套用。`master` 中保留的 `build-loongarch-oldworld.yml` 仅用于让 GitHub Actions 默认分支页面显示 NET10 手动触发入口，运行时会 checkout 你在输入框中选择的 misha 分支。misha 分支的完整说明在对应分支的 `tools/loongarch-oldworld/README.zh-CN.md` 和 `tools/loongarch-oldworld/README.md`。
 
 ## 下载和运行 master 包
 

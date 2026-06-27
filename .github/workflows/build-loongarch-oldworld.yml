@@ -1,0 +1,226 @@
+name: Build ClassIsland misha LoongArch old-world ABI1.0 package (.NET 10)
+
+on:
+  workflow_dispatch:
+    inputs:
+      version_tag:
+        description: 手动指定版本号（例如 2.0.4.0000）。留空则基于远端最新 tag 自动计算
+        required: false
+        default: ''
+        type: string
+      branch:
+        description: 要打包的 misha 测试分支；不要填写 master
+        required: true
+        default: develop/v2/misha-alpha-ci
+        type: string
+      package_label:
+        description: 可选 tar 包名标签；留空则使用 misha 分支名
+        required: false
+        default: ""
+        type: string
+      artifact_name:
+        description: 上传到 GitHub Actions 的 artifact 名称
+        required: true
+        default: ClassIsland-misha-linux-loongarch64-oldworld
+        type: string
+      avaloniaVersion:
+        description: Avalonia version used by the dynamic patch
+        required: true
+        default: 12.0.4
+        type: string
+      useOnlineNativeAssets:
+        description: Download latest online native artifacts instead of bundled prebuilt native libraries
+        required: true
+        default: false
+        type: boolean
+      nativeAssetsBranch:
+        description: Branch of the native-library forks to download artifacts from
+        required: true
+        default: main
+        type: string
+      skiaRepo:
+        description: SkiaSharp native-library repo, owner/name
+        required: true
+        default: YU322142/SkiaSharp-Loongarch-ABI1.0
+        type: string
+      skiaArtifactName:
+        description: SkiaSharp artifact name produced by the native-library workflow
+        required: true
+        default: libSkiaSharp-linux-loongarch64-oldworld
+        type: string
+      harfbuzzRepo:
+        description: HarfBuzzSharp native-library repo, owner/name
+        required: true
+        default: YU322142/harfbuzz-Loongarch-ABI1.0
+        type: string
+      harfbuzzArtifactName:
+        description: HarfBuzzSharp artifact name produced by the native-library workflow
+        required: true
+        default: libHarfBuzzSharp-linux-loongarch64-oldworld
+        type: string
+      nativeWorkflowFile:
+        description: Native-library workflow file name
+        required: true
+        default: build-loongarch-oldworld.yml
+        type: string
+  push:
+    branches:
+      - develop/v2/misha-alpha
+      - develop/v2/misha-alpha-ci
+    paths:
+      - tools/loongarch-oldworld/**
+      - .github/workflows/build-loongarch-oldworld.yml
+
+jobs:
+  package:
+    runs-on: windows-latest
+    timeout-minutes: 240
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: false
+          fetch-depth: 0
+
+      - name: Prepare version tag
+        shell: pwsh
+        run: |
+          git config user.email "actions@github.com"
+          git config user.name "GitHub Actions"
+
+          # 拉取所有远端 tag
+          git fetch --tags origin || true
+
+          $inputTag = "${{ github.event.inputs.version_tag }}"
+          if (-not [string]::IsNullOrWhiteSpace($inputTag)) {
+            $versionTag = $inputTag
+          } else {
+            # 只看远端已有的数字 tag
+            $latestTag = git tag -l |
+              Where-Object { $_ -match '^\d+\.\d+\.\d+\.\d+$' } |
+              Sort-Object {
+                $p = $_.Split(".")
+                "{0:D10}.{1:D10}.{2:D10}.{3:D10}" -f [int]$p[0], [int]$p[1], [int]$p[2], [int]$p[3]
+              } |
+              Select-Object -Last 1
+
+            if ([string]::IsNullOrWhiteSpace($latestTag)) {
+              # 仓库里没有 tag 时，从 2.0.3.0001 开始
+              $versionTag = "2.0.3.0001"
+            } else {
+              Write-Host "Latest remote tag: $latestTag"
+              $parts = $latestTag.Split(".")
+              $v1 = if ($parts[0]) { $parts[0] } else { "2" }
+              $v2 = if ($parts[1]) { $parts[1] } else { "0" }
+              $v3 = if ($parts[2]) { $parts[2] } else { "3" }
+              $v4 = if ($parts[3]) { $parts[3] -replace '[^0-9]', '' } else { "0" }
+              if ([string]::IsNullOrWhiteSpace($v4)) {
+                $v4 = "0"
+              }
+
+              # 迁移逻辑：
+              # 0      -> 0001
+              # 203    -> 2003
+              # 202    -> 2002
+              # 2003   -> 2004
+              if ($v4 -eq "0") {
+                $nextV4 = "0001"
+              } elseif ($v4.Length -lt 4) {
+                $last2 = $v4.Substring([Math]::Max(0, $v4.Length - 2))
+                $nextV4 = "20{0:D2}" -f [int]$last2
+              } else {
+                $nextV4 = "{0:D4}" -f ([int]$v4 + 1)
+              }
+
+              $versionTag = "$v1.$v2.$v3.$nextV4"
+            }
+          }
+
+          "VERSION_TAG=$versionTag" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "Current build version: $versionTag"
+
+          git tag -f "$versionTag"
+          git push origin "$versionTag" --force
+
+      - name: Checkout selected misha source branch
+        shell: pwsh
+        run: |
+          $sourceRef = "${{ github.event.inputs.branch }}"
+          if ([string]::IsNullOrWhiteSpace($sourceRef)) {
+            $sourceRef = "${{ github.ref_name }}"
+          }
+          if ($sourceRef -in @("master", "main")) {
+            throw "This .NET 10 workflow only packages misha branches. Do not use master/main here."
+          }
+
+          "CLASSISLAND_SOURCE_REF=$sourceRef" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "Selected source branch: $sourceRef"
+
+          if ($sourceRef -ne "${{ github.ref_name }}" -or -not (Test-Path "tools/loongarch-oldworld/Build-ClassIsland-LoongArchOldWorld.ps1")) {
+            git fetch origin "$sourceRef" --depth=1
+            git checkout --force FETCH_HEAD
+          }
+
+          if (-not (Test-Path "tools/loongarch-oldworld/Build-ClassIsland-LoongArchOldWorld.ps1")) {
+            throw "tools/loongarch-oldworld was not found after checkout. Please select develop/v2/misha-alpha or develop/v2/misha-alpha-ci."
+          }
+
+      - name: Setup .NET 10 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Download online native libraries
+        if: ${{ github.event.inputs.useOnlineNativeAssets == 'true' }}
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.ACTIONS_DOWNLOAD_TOKEN || github.token }}
+        run: |
+          tools/loongarch-oldworld/Get-OnlineNativeAssets.ps1 `
+            -OutputDir "$env:GITHUB_WORKSPACE\artifacts\loongarch-oldworld\online-native" `
+            -SkiaRepo "${{ github.event.inputs.skiaRepo }}" `
+            -SkiaArtifactName "${{ github.event.inputs.skiaArtifactName }}" `
+            -HarfBuzzRepo "${{ github.event.inputs.harfbuzzRepo }}" `
+            -HarfBuzzArtifactName "${{ github.event.inputs.harfbuzzArtifactName }}" `
+            -WorkflowFileName "${{ github.event.inputs.nativeWorkflowFile }}" `
+            -Branch "${{ github.event.inputs.nativeAssetsBranch }}" `
+            -Wait `
+            -TimeoutMinutes 180
+
+      - name: Package ClassIsland
+        shell: pwsh
+        env:
+          API_SIGNING_KEY: ${{ secrets.API_SIGNING_KEY }}
+          API_SIGNING_KEY_PS: ${{ secrets.API_SIGNING_KEY_PS }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $sourceRef = "$env:CLASSISLAND_SOURCE_REF"
+          $appVersion = "$env:VERSION_TAG"
+          if ([string]::IsNullOrWhiteSpace($appVersion)) {
+            $appVersion = "2.0.0.0"
+          }
+          $avaloniaVersion = "${{ github.event.inputs.avaloniaVersion }}"
+          if ([string]::IsNullOrWhiteSpace($avaloniaVersion)) {
+            $avaloniaVersion = "12.0.4"
+          }
+          $buildArgs = @{
+            RepoUrl = "https://github.com/${{ github.repository }}.git"
+            Branches = $sourceRef
+            SourceMode = "auto"
+            AvaloniaVersion = $avaloniaVersion
+            AppVersion = $appVersion
+            PackageLabel = "${{ github.event.inputs.package_label }}"
+          }
+          if ("${{ github.event.inputs.useOnlineNativeAssets }}" -eq "true") {
+            $buildArgs.NativeAssetsDir = "$env:GITHUB_WORKSPACE\artifacts\loongarch-oldworld\online-native"
+          }
+          tools/loongarch-oldworld/Build-ClassIsland-LoongArchOldWorld.ps1 @buildArgs
+
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ github.event.inputs.artifact_name || 'ClassIsland-misha-linux-loongarch64-oldworld' }}
+          path: |
+            artifacts/loongarch-oldworld/out/*.tar.gz
+          if-no-files-found: error
