@@ -83,6 +83,29 @@ jobs:
           submodules: false
           fetch-depth: 0
 
+      - name: Checkout selected misha source branch
+        shell: pwsh
+        run: |
+          $sourceRef = "${{ github.event.inputs.branch }}"
+          if ([string]::IsNullOrWhiteSpace($sourceRef)) {
+            $sourceRef = "${{ github.ref_name }}"
+          }
+          if ($sourceRef -in @("master", "main")) {
+            throw "This .NET 10 workflow only packages misha branches. Do not use master/main here."
+          }
+
+          "CLASSISLAND_SOURCE_REF=$sourceRef" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "Selected source branch: $sourceRef"
+
+          if ($sourceRef -ne "${{ github.ref_name }}" -or -not (Test-Path "tools/loongarch-oldworld/Build-ClassIsland-LoongArchOldWorld.ps1")) {
+            git fetch origin "$sourceRef" --depth=1
+            git checkout --force FETCH_HEAD
+          }
+
+          if (-not (Test-Path "tools/loongarch-oldworld/Build-ClassIsland-LoongArchOldWorld.ps1")) {
+            throw "tools/loongarch-oldworld was not found after checkout. Please select develop/v2/misha-alpha or develop/v2/misha-alpha-ci."
+          }
+
       - name: Prepare version tag
         shell: pwsh
         run: |
@@ -142,29 +165,6 @@ jobs:
 
           git tag -f "$versionTag"
           git push origin "$versionTag" --force
-
-      - name: Checkout selected misha source branch
-        shell: pwsh
-        run: |
-          $sourceRef = "${{ github.event.inputs.branch }}"
-          if ([string]::IsNullOrWhiteSpace($sourceRef)) {
-            $sourceRef = "${{ github.ref_name }}"
-          }
-          if ($sourceRef -in @("master", "main")) {
-            throw "This .NET 10 workflow only packages misha branches. Do not use master/main here."
-          }
-
-          "CLASSISLAND_SOURCE_REF=$sourceRef" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          Write-Host "Selected source branch: $sourceRef"
-
-          if ($sourceRef -ne "${{ github.ref_name }}" -or -not (Test-Path "tools/loongarch-oldworld/Build-ClassIsland-LoongArchOldWorld.ps1")) {
-            git fetch origin "$sourceRef" --depth=1
-            git checkout --force FETCH_HEAD
-          }
-
-          if (-not (Test-Path "tools/loongarch-oldworld/Build-ClassIsland-LoongArchOldWorld.ps1")) {
-            throw "tools/loongarch-oldworld was not found after checkout. Please select develop/v2/misha-alpha or develop/v2/misha-alpha-ci."
-          }
 
       - name: Setup .NET 10 SDK
         uses: actions/setup-dotnet@v4
