@@ -1,4 +1,4 @@
-name: Build ClassIsland misha LoongArch old-world ABI1.0 package
+name: Build ClassIsland misha LoongArch old-world ABI1.0 package (.NET 10)
 
 on:
   workflow_dispatch:
@@ -86,12 +86,17 @@ jobs:
       - name: Prepare version tag
         shell: pwsh
         run: |
-          git fetch --tags origin
+          git config user.email "actions@github.com"
+          git config user.name "GitHub Actions"
+
+          # 拉取所有远端 tag
+          git fetch --tags origin || true
 
           $inputTag = "${{ github.event.inputs.version_tag }}"
           if (-not [string]::IsNullOrWhiteSpace($inputTag)) {
             $versionTag = $inputTag
           } else {
+            # 只看远端已有的数字 tag
             $latestTag = git tag -l |
               Where-Object { $_ -match '^\d+\.\d+\.\d+\.\d+$' } |
               Sort-Object {
@@ -101,6 +106,7 @@ jobs:
               Select-Object -Last 1
 
             if ([string]::IsNullOrWhiteSpace($latestTag)) {
+              # 仓库里没有 tag 时，从 2.0.3.0001 开始
               $versionTag = "2.0.3.0001"
             } else {
               Write-Host "Latest remote tag: $latestTag"
@@ -113,6 +119,11 @@ jobs:
                 $v4 = "0"
               }
 
+              # 迁移逻辑：
+              # 0      -> 0001
+              # 203    -> 2003
+              # 202    -> 2002
+              # 2003   -> 2004
               if ($v4 -eq "0") {
                 $nextV4 = "0001"
               } elseif ($v4.Length -lt 4) {
@@ -128,6 +139,32 @@ jobs:
 
           "VERSION_TAG=$versionTag" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           Write-Host "Current build version: $versionTag"
+
+          git tag -f "$versionTag"
+          git push origin "$versionTag" --force
+
+      - name: Checkout selected misha source branch
+        shell: pwsh
+        run: |
+          $sourceRef = "${{ github.event.inputs.branch }}"
+          if ([string]::IsNullOrWhiteSpace($sourceRef)) {
+            $sourceRef = "${{ github.ref_name }}"
+          }
+          if ($sourceRef -in @("master", "main")) {
+            throw "This .NET 10 workflow only packages misha branches. Do not use master/main here."
+          }
+
+          "CLASSISLAND_SOURCE_REF=$sourceRef" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "Selected source branch: $sourceRef"
+
+          if ($sourceRef -ne "${{ github.ref_name }}" -or -not (Test-Path "tools/loongarch-oldworld/Build-ClassIsland-LoongArchOldWorld.ps1")) {
+            git fetch origin "$sourceRef" --depth=1
+            git checkout --force FETCH_HEAD
+          }
+
+          if (-not (Test-Path "tools/loongarch-oldworld/Build-ClassIsland-LoongArchOldWorld.ps1")) {
+            throw "tools/loongarch-oldworld was not found after checkout. Please select develop/v2/misha-alpha or develop/v2/misha-alpha-ci."
+          }
 
       - name: Setup .NET 10 SDK
         uses: actions/setup-dotnet@v4
@@ -158,10 +195,7 @@ jobs:
           API_SIGNING_KEY_PS: ${{ secrets.API_SIGNING_KEY_PS }}
           GITHUB_TOKEN: ${{ github.token }}
         run: |
-          $sourceRef = "${{ github.event.inputs.branch }}"
-          if ([string]::IsNullOrWhiteSpace($sourceRef)) {
-            $sourceRef = "${{ github.ref_name }}"
-          }
+          $sourceRef = "$env:CLASSISLAND_SOURCE_REF"
           $appVersion = "$env:VERSION_TAG"
           if ([string]::IsNullOrWhiteSpace($appVersion)) {
             $appVersion = "2.0.0.0"
