@@ -1,4 +1,4 @@
-name: Build ClassIsland for LoongArch
+name: Build ClassIsland for LoongArch (.NET 8 old-world)
 
 on:
   push:
@@ -421,6 +421,173 @@ jobs:
           path.write_text(text.replace(old, new), encoding="utf-8")
           PY
 
+      - name: Patch Linux X11 IME auto detection
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+
+          path = Path("ClassIsland.Desktop/Program.cs")
+          text = path.read_text(encoding="utf-8").replace("\r\n", "\n")
+
+          if "using Avalonia.X11;" not in text:
+              marker = "using Avalonia.Platform;\n"
+              if marker not in text:
+                  raise SystemExit("Avalonia.Platform using marker not found; upstream Program.cs may have changed.")
+              text = text.replace(
+                  marker,
+                  marker + "#if Platforms_Linux\nusing Avalonia.X11;\n#endif\n",
+                  1,
+              )
+
+          if "ConfigureLinuxX11Environment();" not in text:
+              old = "#endif\n        var stopTokenSource = new CancellationTokenSource();\n"
+              new = "#endif\n#if Platforms_Linux\n        ConfigureLinuxX11Environment();\n#endif\n        var stopTokenSource = new CancellationTokenSource();\n"
+              if old not in text:
+                  raise SystemExit("Program.cs startup marker not found; upstream Program.cs may have changed.")
+              text = text.replace(old, new, 1)
+
+          if "BuildX11PlatformOptions()" not in text:
+              old = "            })\n#if DEBUG\n"
+              new = "            })\n#if Platforms_Linux\n            .With(BuildX11PlatformOptions())\n#endif\n#if DEBUG\n"
+              if old not in text:
+                  raise SystemExit("Program.cs AppBuilder marker not found; upstream Program.cs may have changed.")
+              text = text.replace(old, new, 1)
+
+          if "ShouldEnableLinuxIme" not in text:
+              marker = "    private static IReadOnlyList<Win32RenderingMode> BuildRenderingMode(int userValue)\n"
+              if marker not in text:
+                  raise SystemExit("Program.cs helper insertion marker not found; upstream Program.cs may have changed.")
+              helper = r'''
+          #if Platforms_Linux
+              private static void ConfigureLinuxX11Environment()
+              {
+                  if (!ShouldEnableLinuxIme())
+                  {
+                      Environment.SetEnvironmentVariable("XMODIFIERS", "@im=none");
+                      Environment.SetEnvironmentVariable("GTK_IM_MODULE", "xim");
+                      Environment.SetEnvironmentVariable("QT_IM_MODULE", "xim");
+                  }
+              }
+
+              private static X11PlatformOptions BuildX11PlatformOptions()
+              {
+                  return new X11PlatformOptions
+                  {
+                      EnableIme = ShouldEnableLinuxIme()
+                  };
+              }
+
+              private static bool ShouldEnableLinuxIme()
+              {
+                  var requested = Environment.GetEnvironmentVariable("CLASSISLAND_X11_ENABLE_IME");
+                  var parsed = ParseBooleanSwitch(requested);
+                  if (parsed.HasValue)
+                  {
+                      return parsed.Value;
+                  }
+
+                  if (!IsLoongArch64())
+                  {
+                      return true;
+                  }
+
+                  return HasFcitxDbusService();
+              }
+
+              private static bool HasFcitxDbusService()
+              {
+                  if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("DBUS_SESSION_BUS_ADDRESS")))
+                  {
+                      return false;
+                  }
+
+                  return TryFindFcitxWithProcess("dbus-send",
+                             new[]
+                             {
+                                 "--session",
+                                 "--dest=org.freedesktop.DBus",
+                                 "--type=method_call",
+                                 "--print-reply",
+                                 "/org/freedesktop/DBus",
+                                 "org.freedesktop.DBus.ListNames"
+                             })
+                         || TryFindFcitxWithProcess("busctl", new[] { "--user", "--no-pager", "--no-legend", "list" });
+              }
+
+              private static bool TryFindFcitxWithProcess(string fileName, string[] arguments)
+              {
+                  try
+                  {
+                      using var process = new Process
+                      {
+                          StartInfo =
+                          {
+                              FileName = fileName,
+                              UseShellExecute = false,
+                              RedirectStandardOutput = true,
+                              RedirectStandardError = true,
+                              CreateNoWindow = true
+                          }
+                      };
+
+                      foreach (var argument in arguments)
+                      {
+                          process.StartInfo.ArgumentList.Add(argument);
+                      }
+
+                      if (!process.Start())
+                      {
+                          return false;
+                      }
+
+                      if (!process.WaitForExit(1500))
+                      {
+                          try
+                          {
+                              process.Kill();
+                          }
+                          catch
+                          {
+                              // ignored
+                          }
+
+                          return false;
+                      }
+
+                      var output = process.StandardOutput.ReadToEnd();
+                      return process.ExitCode == 0
+                             && output.Contains("org.fcitx.Fcitx", StringComparison.Ordinal);
+                  }
+                  catch
+                  {
+                      return false;
+                  }
+              }
+
+              private static bool IsLoongArch64()
+              {
+                  return string.Equals(RuntimeInformation.OSArchitecture.ToString(), "LoongArch64", StringComparison.OrdinalIgnoreCase)
+                         || string.Equals(RuntimeInformation.ProcessArchitecture.ToString(), "LoongArch64", StringComparison.OrdinalIgnoreCase);
+              }
+
+              private static bool? ParseBooleanSwitch(string? value)
+              {
+                  return (value ?? "").Trim().ToLowerInvariant() switch
+                  {
+                      "1" or "true" or "yes" or "on" or "enable" or "enabled" => true,
+                      "0" or "false" or "no" or "off" or "disable" or "disabled" => false,
+                      _ => null
+                  };
+              }
+          #endif
+
+          '''
+              text = text.replace(marker, helper + marker, 1)
+
+          path.write_text(text, encoding="utf-8")
+          PY
+
       - name: Publish ClassIsland
         shell: bash
         run: |
@@ -467,6 +634,39 @@ jobs:
           export DBUS_SESSION_BUS_ADDRESS=${DBUS_SESSION_BUS_ADDRESS:-unix:path=/run/user/$(id -u)/bus}
           export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
           export XDG_DATA_DIRS=${XDG_DATA_DIRS:-/usr/share:/usr/local/share}
+          export CLASSISLAND_X11_ENABLE_IME="${CLASSISLAND_X11_ENABLE_IME:-auto}"
+
+          classisland_has_fcitx_dbus() {
+            if command -v dbus-send >/dev/null 2>&1; then
+              dbus-send --session --dest=org.freedesktop.DBus --type=method_call --print-reply \
+                /org/freedesktop/DBus org.freedesktop.DBus.ListNames 2>/dev/null | grep -q 'org.fcitx.Fcitx' && return 0
+            fi
+            if command -v busctl >/dev/null 2>&1; then
+              busctl --user --no-pager --no-legend list 2>/dev/null | grep -q 'org.fcitx.Fcitx' && return 0
+            fi
+            return 1
+          }
+
+          classisland_disable_ime() {
+            export XMODIFIERS="@im=none"
+            export GTK_IM_MODULE="xim"
+            export QT_IM_MODULE="xim"
+          }
+
+          CLASSISLAND_IME_SWITCH="$(printf '%s' "$CLASSISLAND_X11_ENABLE_IME" | tr '[:upper:]' '[:lower:]')"
+          case "$CLASSISLAND_IME_SWITCH" in
+            0|false|no|off|disable|disabled)
+              classisland_disable_ime
+              ;;
+            auto|"")
+              if ! classisland_has_fcitx_dbus; then
+                export CLASSISLAND_X11_ENABLE_IME=0
+                classisland_disable_ime
+              else
+                export CLASSISLAND_X11_ENABLE_IME=1
+              fi
+              ;;
+          esac
 
           cd "$APP_DIR"
           mkdir -p "$SCRIPT_DIR/logs"

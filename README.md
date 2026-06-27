@@ -1,75 +1,90 @@
-# ClassIsland - LoongArch (旧世界) 适配版
+# ClassIsland - LoongArch old-world ABI1.0
 
 ![Build Status](https://github.com/YU322142/ClassIsland/actions/workflows/build-loongarch.yml/badge.svg)
-![Platform](https://img.shields.io/badge/Platform-LoongArch64%20(Old%20World)-blue)
+![Platform](https://img.shields.io/badge/Platform-LoongArch64%20old--world-blue)
 ![.NET](https://img.shields.io/badge/.NET-8.0-purple)
 
-本仓库是 [ClassIsland](https://github.com/ClassIsland/ClassIsland) 的分支版本，专为运行在 **LoongArch 架构（龙芯）的旧世界系统**（如银河麒麟 V10 教育版、Loongnix 等采用 16K 内存页的系统）上深度定制和编译。
+本仓库是 [ClassIsland](https://github.com/ClassIsland/ClassIsland) 的龙芯旧世界适配 fork，面向银河麒麟 V10、Loongnix 等 LoongArch old-world ABI1.0 X11 桌面环境。这个 README 只作为入口索引和 `master` 分支说明，避免把 .NET 8 主分支、.NET 10 misha 测试分支、QEMU 测试环境混在一起。
 
-## 龙芯旧世界构建入口
+## 构建入口
 
-这里的“主分支”指本仓库的 `master` 分支，不是 `develop/v2/misha-alpha-ci`。本分支使用旧版 .NET 8 龙芯旧世界构建流程，misha 测试分支使用独立的 Loongnix .NET 10 构建流程。
-
-| 目标 | Actions workflow | 适用分支 | 运行库 | 原生库来源 |
+| 目标 | 分支 | Workflow | 运行库 | 原生库来源 |
 | --- | --- | --- | --- | --- |
-| 主分支旧世界包 | [Build ClassIsland for LoongArch](https://github.com/YU322142/ClassIsland/actions/workflows/build-loongarch.yml) | `master` | 旧版 .NET 8 | 使用本分支已有的预编译旧世界原生库/运行库 |
-| misha 旧世界测试包 | [Build ClassIsland misha LoongArch old-world ABI1.0 package](https://github.com/YU322142/ClassIsland/actions/workflows/build-loongarch-oldworld.yml) | `develop/v2/misha-alpha`、`develop/v2/misha-alpha-ci` | Loongnix .NET 10 | 默认使用 VM 验证过的预编译库，也可改用两个支持库的线上 Actions artifact |
+| 主分支旧世界包 | `master` | [Build ClassIsland for LoongArch](https://github.com/YU322142/ClassIsland/actions/workflows/build-loongarch.yml) | .NET 8 | 本分支内置的 `LoongArch-Runtime/` 与 `LoongArch-NativeLibs/` |
+| misha CI 旧世界测试包 | `develop/v2/misha-alpha-ci` | [Build ClassIsland misha LoongArch old-world ABI1.0 package](https://github.com/YU322142/ClassIsland/actions/workflows/build-loongarch-oldworld.yml) | Loongnix .NET 10 | 独立的 SkiaSharp/HarfBuzzSharp old-world 支持库构建 |
+| misha 非 CI 测试包 | `develop/v2/misha-alpha` | 同上 | Loongnix .NET 10 | 同上 |
 
-misha 测试包的说明在对应分支的 `tools/loongarch-oldworld/README.zh-CN.md` / `README.md` 中。本 `master` 分支 README 只说明旧版 .NET 8 主分支旧世界包的构建和运行方式；请不要把 misha workflow 用于 `master`。
+`master` 是旧版 .NET 8 旧世界构建；misha 分支是 .NET 10 测试构建。两套流程不要互相套用。misha 分支的完整说明在对应分支的 `tools/loongarch-oldworld/README.zh-CN.md` 和 `tools/loongarch-oldworld/README.md`。
 
-LoongArch old-world ABI1.0 has two build paths: this `master` branch uses the older .NET 8 workflow, while the misha branches use a separate Loongnix .NET 10 test packaging workflow. See `tools/loongarch-oldworld/README.zh-CN.md` / `README.md` on the misha branches for the .NET 10 build notes.
+## 下载和运行 master 包
 
-## 🎯 解决了什么问题？
+1. 打开 [Actions](https://github.com/YU322142/ClassIsland/actions/workflows/build-loongarch.yml)。
+2. 选择最新一次成功的 `Build ClassIsland for LoongArch`。
+3. 在页面底部下载 artifact：`ClassIsland-LoongArch-OldWorld`。
+4. 传到龙芯旧世界 X11 桌面环境后解压并运行：
 
-原版 ClassIsland 及相关插件在龙芯旧世界电脑上（尤其是通过 LATX 等转译器）运行时会遇到以下致命问题，本分支已将其全部修复：
+```bash
+tar -xzf ClassIsland-LoongArch.tar.gz -C ~/ClassIsland
+cd ~/ClassIsland
+bash run.sh
+```
 
-1. **底层崩溃修复**：彻底放弃 x86 转译，采用原生编译。避开了旧世界 Linux 16KB 内存页导致的 .NET JIT `mprotect` 权限分配崩溃问题。
-2. **图形渲染修复**：官方 NuGet 源缺失 LoongArch 的原生 UI 依赖。本分支内建了提取自原生系统的 `libSkiaSharp.so` 和 `libHarfBuzzSharp.so`，彻底解决黑屏/闪退问题。
-3. **音频引擎重构**：原版使用的 `MiniAudio` 缺少龙芯原生实现会导致启动崩溃。本分支重写了 `AudioService`，智能调用系统底层的 `ffplay`，完美恢复了 EdgeTTS 语音播报及上下课铃声。
-4. **修改部分插件**：同步深度修改了 [IslandCaller 随机点名插件](https://github.com/YU322142/IslandCaller-linux/tree/loongarch-support)，去除了对 Windows 注册表的依赖（改为 JSON 存储），重写了 Linux X11 协议的悬浮窗置顶逻辑（`_NET_WM_STATE_ABOVE`）及手动拖拽映射，使插件在 Linux 下体验与 Windows 完全一致。
+默认后台启动，日志写入 `logs/classisland.log`。需要前台观察输出时使用：
 
-## 📥 安装与运行
+```bash
+bash run.sh --foreground
+```
 
-本仓库已配置自动化构建，你无需在本地折腾复杂的交叉编译环境。
+## 运行依赖
 
-### 1. 下载发行版
-前往本仓库的 **[Actions](https://github.com/YU322142/ClassIsland/actions)** 页面，点击最新一次成功的 Workflow，在底部的 **Artifacts** 处下载 `ClassIsland-LoongArch-OldWorld` 压缩包。
+建议先安装音频后备播放器：
 
-### 2. 准备依赖
-本版本使用 `ffmpeg` 作为音频后备播放器，请确保龙芯系统内已安装：
 ```bash
 sudo apt update
 sudo apt install ffmpeg
 ```
 
-### 3. 一键运行
-将下载的压缩包传至龙芯电脑，解压后直接执行：
-```bash
-# 解压文件
-tar -xzf ClassIsland-LoongArch.tar.gz -C ~/ClassIsland
-cd ~/ClassIsland
+本包面向 X11 桌面环境，不面向 Wayland/XWayland。托盘、置顶、透明窗口、声音、天气、插件等功能都应按完整应用功能测试，龙芯适配不应以牺牲功能为代价。
 
-# 执行一键启动脚本
-bash run.sh
-```
-*脚本会自动完成运行时关联、依赖注入，并在后台静默启动 ClassIsland，不遗留任何多余的终端窗口。*
+## 输入法自动探测
 
-如果需要查看运行日志，可以执行：
+`run.sh` 默认设置：
+
 ```bash
-tail -f logs/classisland.log
+CLASSISLAND_X11_ENABLE_IME=auto
 ```
 
-## 🛠️ 开发者：关于构建系统
+在 LoongArch 上，程序会自动检查当前用户 DBus 会话里是否存在 Fcitx/Fcitx5 服务：
 
-如果你想自己 Fork 此仓库并进行二次开发，本仓库的 `.github/workflows/build-loongarch.yml` 已经为你做好了所有脏活累活。
+- 检测到 Fcitx/Fcitx5 时启用 Avalonia X11 IME，不影响中文输入法。
+- 未检测到 Fcitx/Fcitx5 时，仅对 ClassIsland 禁用 IME，避免 Avalonia 反复访问不存在的 Fcitx DBus 服务导致刷日志和卡顿。
+- 需要强制启用时执行 `CLASSISLAND_X11_ENABLE_IME=1 bash run.sh`。
+- 需要强制禁用时执行 `CLASSISLAND_X11_ENABLE_IME=0 bash run.sh`。
 
-云端 Action 会自动执行以下步骤，输出一个“零配置”的绿色包：
-1. 自动对 `global.json` 等配置降级，以适配可用的 .NET 8 龙芯 SDK。
-2. 自动修正子模块（如 EdgeTtsSharp）在跨平台环境下的语法版本冲突。
-3. 将仓库内 `LoongArch-NativeLibs/` 下的原生 `.so` 库硬注入编译产物。
-4. 将仓库内 `LoongArch-Runtime/` 下的龙芯 .NET 运行时与主程序**合并在同一目录**，彻底消灭 Linux 桌面环境常见的符号链接与相对路径死链问题。
+.NET 8 `master` 和 .NET 10 misha 旧世界包采用相同的自动探测策略，但实现分别位于各自分支的构建流程中，互不混用。
 
-## 📜 鸣谢与协议
+## 构建说明
 
-- **核心程序**：[ClassIsland](https://github.com/ClassIsland/ClassIsland)
-- 本分支代码继承原项目的开源协议，仅供学习、交流与教育场景使用。
+`master` 的 `.github/workflows/build-loongarch.yml` 会在线完成以下工作：
+
+1. 准备 .NET 8 SDK，并把项目配置调整到可构建状态。
+2. 生成空的 GPT-SoVITS 私钥占位文件，本 fork 不内置该语音服务私钥。
+3. 修补 Linux 音频播放逻辑，优先使用原生音频引擎，失败时回退到 `ffplay`/`paplay`/`aplay`。
+4. 修补 Linux 重启逻辑，保证随包内 .NET runtime 重新启动。
+5. 修补 Linux X11 IME 自动探测逻辑。
+6. 注入 `LoongArch-NativeLibs/` 中的 SkiaSharp/HarfBuzzSharp 原生库。
+7. 解包 `LoongArch-Runtime/` 中的 .NET 8 LoongArch runtime。
+8. 生成 `run.sh` 并上传 `ClassIsland-LoongArch-OldWorld` artifact。
+
+手动触发 workflow 时可填写 `version_tag`，留空则基于仓库已有数字 tag 自动递增。
+
+## 相关项目
+
+- QEMU 旧世界测试环境：[YU322142/loongarch-oldworld-qemu-vm](https://github.com/YU322142/loongarch-oldworld-qemu-vm)
+- SkiaSharp old-world 支持库：[YU322142/SkiaSharp-Loongarch-ABI1.0](https://github.com/YU322142/SkiaSharp-Loongarch-ABI1.0)
+- HarfBuzzSharp old-world 支持库：[YU322142/harfbuzz-Loongarch-ABI1.0](https://github.com/YU322142/harfbuzz-Loongarch-ABI1.0)
+- 上游 ClassIsland：[ClassIsland/ClassIsland](https://github.com/ClassIsland/ClassIsland)
+
+## 许可证
+
+本 fork 继承上游 ClassIsland 的开源协议。ClassIsland.PluginSdk、ClassIsland.Core、ClassIsland.Shared.Ipc、ClassIsland.Shared 基于 LGPL-3.0；其余应用本体代码基于 GPL-3.0。详见仓库内 `LICENSE.txt` 与上游项目说明。
