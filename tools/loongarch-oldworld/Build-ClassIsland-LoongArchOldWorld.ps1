@@ -863,21 +863,30 @@ function Patch-ClassIslandLinuxX11Stability {
         $Text = Replace-RequiredLiteral -Text $Text -Search $Search -Replacement $Replacement -Description "Linux _NET_ACTIVE_WINDOW XGetWindowProperty guard"
     }
 
-    if ($Text -notmatch "Architecture\.LoongArch64") {
+    if ($Text -notmatch "LoongArch old-world topmost") {
         $Search = @'
-        if ((features & WindowFeatures.SkipManagement) > 0)
-        {
+                XUnmapWindow(_display, handle);
+                XChangeWindowAttributes(_display, handle, CWOverrideRedirect, ref attributes);
+                Dispatcher.UIThread.InvokeAsync(() =>
+                {
+                    XMapWindow(_display, handle);
+                    XFlush(_display);
+                });
 '@
         $Replacement = @'
-        if ((features & WindowFeatures.SkipManagement) > 0)
-        {
-            if (RuntimeInformation.ProcessArchitecture == Architecture.LoongArch64)
-            {
-                return;
-            }
-
+                XUnmapWindow(_display, handle);
+                XChangeWindowAttributes(_display, handle, CWOverrideRedirect, ref attributes);
+                XMapWindow(_display, handle);
+                if (state)
+                {
+                    // LoongArch old-world topmost relies on override_redirect.
+                    // Re-assert ABOVE after remap so Avalonia 12/X11 does not lose stacking.
+                    ChangeWMAtoms(handle, true, XInternAtom(_display, "_NET_WM_STATE_ABOVE", true));
+                    XRaiseWindow(_display, handle);
+                }
+                XFlush(_display);
 '@
-        $Text = Replace-RequiredLiteral -Text $Text -Search $Search -Replacement $Replacement -Description "Linux LoongArch SkipManagement guard"
+        $Text = Replace-RequiredLiteral -Text $Text -Search $Search -Replacement $Replacement -Description "Linux LoongArch X11 topmost remap"
     }
 
     Set-TextIfChanged -Path $WindowPlatformServicePath -Content $Text
