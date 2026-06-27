@@ -40,7 +40,7 @@ Two LoongArch workflows are intentionally kept separate:
 - Keeps GPT-SoVITS internal preset signing optional so missing private keys do not block normal builds.
 - Applies Linux/X11 stability patches needed by the old-world VM.
 - Forces Avalonia software rendering by default on LoongArch64 Linux/X11 and keeps the CPU framebuffer retained to avoid red/white blocks on real hardware GLX/EGL paths.
-- Disables Avalonia IME probing in the default test environment so a missing `org.fcitx.Fcitx` DBus service does not repeatedly log errors and slow down interaction.
+- Auto-detects the Fcitx/Fcitx5 DBus service by default; Avalonia IME is enabled when the service exists and disabled when it is missing to avoid repeated errors and sluggish interaction.
 - Falls back to `ffplay`, `paplay`, or `aplay` for Linux audio when MiniAudio cannot open the default device.
 - Injects the self-built `libSkiaSharp.so` and `libHarfBuzzSharp.so` into `runtimes/linux-loongarch64/native`.
 
@@ -55,7 +55,7 @@ This packaging path therefore defaults LoongArch64 Linux/X11 to:
 ```bash
 CLASSISLAND_X11_RENDERING=software
 CLASSISLAND_X11_RETAINED_FRAMEBUFFER=1
-CLASSISLAND_X11_ENABLE_IME=0
+CLASSISLAND_X11_ENABLE_IME=auto
 ```
 
 These defaults are applied both in the application entry point and in `run.sh`. For normal tests, run:
@@ -72,7 +72,7 @@ CLASSISLAND_X11_RENDERING=egl bash run.sh --foreground
 CLASSISLAND_X11_RENDERING=auto bash run.sh --foreground
 ```
 
-If red/white blocks, incorrectly filled window backgrounds, or severe settings-window sluggishness appear, return to the default `software` mode. If the desktop really has a working Fcitx service, use `CLASSISLAND_X11_ENABLE_IME=1 bash run.sh --foreground` to temporarily enable Avalonia IME; do not enable it on sessions without the Fcitx DBus service.
+If red/white blocks, incorrectly filled window backgrounds, or severe settings-window sluggishness appear, return to the default `software` mode. `CLASSISLAND_X11_ENABLE_IME=auto` checks for `org.fcitx.Fcitx` / `org.fcitx.Fcitx5` on the session DBus; use `CLASSISLAND_X11_ENABLE_IME=1 bash run.sh --foreground` or `CLASSISLAND_X11_ENABLE_IME=0 bash run.sh --foreground` to force the setting.
 
 ## Native libraries
 

@@ -807,7 +807,79 @@ function Patch-ClassIslandLinuxX11Stability {
     private static bool ShouldEnableLinuxIme()
     {
         var requested = Environment.GetEnvironmentVariable("CLASSISLAND_X11_ENABLE_IME");
-        return ParseBooleanSwitch(requested) ?? !IsLoongArch64();
+        var parsed = ParseBooleanSwitch(requested);
+        if (parsed.HasValue)
+        {
+            return parsed.Value;
+        }
+
+        if (!IsLoongArch64())
+        {
+            return true;
+        }
+
+        return HasFcitxDbusService();
+    }
+
+    private static bool HasFcitxDbusService()
+    {
+        if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("DBUS_SESSION_BUS_ADDRESS")))
+        {
+            return false;
+        }
+
+        return TryFindFcitxWithProcess("dbus-send",
+                   new[]
+                   {
+                       "--session",
+                       "--dest=org.freedesktop.DBus",
+                       "--type=method_call",
+                       "--print-reply",
+                       "/org/freedesktop/DBus",
+                       "org.freedesktop.DBus.ListNames"
+                   })
+               || TryFindFcitxWithProcess("busctl", new[] { "--user", "--no-pager", "--no-legend", "list" });
+    }
+
+    private static bool TryFindFcitxWithProcess(string fileName, IReadOnlyList<string> arguments)
+    {
+        try
+        {
+            using var process = new Process
+            {
+                StartInfo =
+                {
+                    FileName = fileName,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false
+                }
+            };
+
+            foreach (var argument in arguments)
+            {
+                process.StartInfo.ArgumentList.Add(argument);
+            }
+
+            if (!process.Start())
+            {
+                return false;
+            }
+
+            if (!process.WaitForExit(1000))
+            {
+                process.Kill(entireProcessTree: true);
+                return false;
+            }
+
+            var output = process.StandardOutput.ReadToEnd();
+            return process.ExitCode == 0
+                   && output.Contains("org.fcitx.Fcitx", StringComparison.Ordinal);
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private static bool IsLoongArch64()
@@ -1485,7 +1557,7 @@ export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 export XDG_DATA_DIRS="${XDG_DATA_DIRS:-/usr/share:/usr/local/share}"
 export CLASSISLAND_X11_RENDERING="${CLASSISLAND_X11_RENDERING:-software}"
 export CLASSISLAND_X11_RETAINED_FRAMEBUFFER="${CLASSISLAND_X11_RETAINED_FRAMEBUFFER:-1}"
-export CLASSISLAND_X11_ENABLE_IME="${CLASSISLAND_X11_ENABLE_IME:-0}"
+export CLASSISLAND_X11_ENABLE_IME="${CLASSISLAND_X11_ENABLE_IME:-auto}"
 
 if [ "$CLASSISLAND_X11_ENABLE_IME" = "0" ] || [ "$CLASSISLAND_X11_ENABLE_IME" = "false" ]; then
   export XMODIFIERS="@im=none"
