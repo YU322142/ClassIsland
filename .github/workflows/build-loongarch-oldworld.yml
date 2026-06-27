@@ -75,6 +75,8 @@ jobs:
   package:
     runs-on: windows-latest
     timeout-minutes: 240
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout
