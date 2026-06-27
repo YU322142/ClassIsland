@@ -39,7 +39,7 @@
 - GPT-SoVITS 内置预设签名改为可选；没有私钥时不阻塞普通构建。
 - 应用旧世界 X11 环境所需的稳定性修补。
 - 在 LoongArch64 Linux/X11 上默认强制 Avalonia 使用软件渲染，并保留 CPU framebuffer，避免实机 GLX/EGL 路径出现红色/白色色块。
-- 在默认测试环境中关闭 Avalonia IME 探测，避免没有 `org.fcitx.Fcitx` DBus 服务时反复报错导致交互卡顿。
+- 默认自动探测 Fcitx/Fcitx5 DBus 服务；存在时启用 Avalonia IME，不存在时关闭 IME 探测，避免反复报错导致交互卡顿。
 - 当 MiniAudio 无法打开默认设备时，使用 `ffplay`、`paplay` 或 `aplay` 进行 Linux 音频 fallback。
 - 将自编译的 `libSkiaSharp.so` 和 `libHarfBuzzSharp.so` 注入到 `runtimes/linux-loongarch64/native`。
 
@@ -54,7 +54,7 @@
 ```bash
 CLASSISLAND_X11_RENDERING=software
 CLASSISLAND_X11_RETAINED_FRAMEBUFFER=1
-CLASSISLAND_X11_ENABLE_IME=0
+CLASSISLAND_X11_ENABLE_IME=auto
 ```
 
 这些默认值已经写入程序入口和 `run.sh`。正常测试请直接运行：
@@ -71,7 +71,7 @@ CLASSISLAND_X11_RENDERING=egl bash run.sh --foreground
 CLASSISLAND_X11_RENDERING=auto bash run.sh --foreground
 ```
 
-如果出现红色/白色色块、窗口背景被整块刷错、或设置页拖动明显卡顿，请恢复默认 `software`。如果系统确实已经启动可用的 Fcitx，可用 `CLASSISLAND_X11_ENABLE_IME=1 bash run.sh --foreground` 临时启用 Avalonia IME；没有 Fcitx DBus 服务时不建议启用。
+如果出现红色/白色色块、窗口背景被整块刷错、或设置页拖动明显卡顿，请恢复默认 `software`。`CLASSISLAND_X11_ENABLE_IME=auto` 会检测 session DBus 中的 `org.fcitx.Fcitx` / `org.fcitx.Fcitx5`；如需强制开关，可用 `CLASSISLAND_X11_ENABLE_IME=1 bash run.sh --foreground` 或 `CLASSISLAND_X11_ENABLE_IME=0 bash run.sh --foreground`。
 
 ## 原生库来源
 
